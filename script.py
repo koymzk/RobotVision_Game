@@ -307,6 +307,12 @@ class PunchDetector:
             else:
                 dd_norm = 0.0
             if v >= self.vel_thresh and dd_norm >= self.ext_thresh and self.left_cd <= 0:
+                # パンチ中は同じ手のガードを強制解除
+                if self.owner is not None and getattr(self.owner, "guard_detector", None) is not None:
+                    gd = self.owner.guard_detector
+                    gd.left_active = False
+                    gd.left_in_ms = 0
+                    gd.left_out_ms = gd.hold_ms  # すぐ再ONにならないようにホールド分加算
                 # 左パンチ: 相手の右ガードで防がれる
                 opp = self.owner.opponent if (self.owner is not None and getattr(self.owner, "opponent", None) is not None) else None
                 blocked = False
@@ -334,6 +340,12 @@ class PunchDetector:
             else:
                 dd_norm = 0.0
             if v >= self.vel_thresh and dd_norm >= self.ext_thresh and self.right_cd <= 0:
+                # パンチ中は同じ手のガードを強制解除
+                if self.owner is not None and getattr(self.owner, "guard_detector", None) is not None:
+                    gd = self.owner.guard_detector
+                    gd.right_active = False
+                    gd.right_in_ms = 0
+                    gd.right_out_ms = gd.hold_ms  # すぐ再ONにならないようにホールド分加算
                 # 右パンチ: 相手の左ガードで防がれる
                 opp = self.owner.opponent if (self.owner is not None and getattr(self.owner, "opponent", None) is not None) else None
                 blocked = False
@@ -414,7 +426,7 @@ class Game:
         self.ui_font = pygame.font.SysFont(None, 22)
         # A.T.フィールド画像とスケール係数（肩幅基準）
         self.atfield_img = None
-        self.atfield_scale = 1.0  # 肩幅[px] × 係数 が画像の一辺になる
+        self.atfield_scale = 2.0  # 肩幅[px] × 係数 が画像の一辺になる（2倍）
         try:
             img = pygame.image.load("./images/atfield.PNG")
             self.atfield_img = img.convert_alpha() if img.get_alpha() else img.convert()
