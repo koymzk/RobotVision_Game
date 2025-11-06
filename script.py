@@ -47,6 +47,7 @@ class SoundManager:
 class Player:
     def __init__(self, health, attack_power, name="P"):
         self.health = health
+        self.max_health = health
         self.attack_power = attack_power
         self.damage_flash = False  # ダメージフラッシュの状態
         self.flash_duration = 5  # フラッシュの持続時間
@@ -64,18 +65,15 @@ class Player:
         self.hit_event = None  # {'shoulder': 'left'|'right', 't0': ms}
         self.guard_block_event = {'left': None, 'right': None}  # ガード成功の発光トリガ（手ごと）
     
-    def take_damage(self, hand=None):
+    def take_damage(self, hand=None, amount=None):
         SoundManager.play("beam")
-        self.health -= self.attack_power
-        # フラッシュは一旦コメントアウト（仕様により画面全体の赤点滅は停止）
-        # self.damage_flash = True
-        # self.flash_timer = self.flash_duration
-        # 被弾エフェクト（肩に画像を一定時間表示）開始
+        dmg = self.attack_power if amount is None else amount
+        self.health -= dmg
         try:
             t0 = pygame.time.get_ticks()
         except Exception:
             t0 = 0
-        # 攻撃手と同じ側の肩に表示（left/right）
+        # 攻撃手の指定がない場合は被弾エフェクトなし
         shoulder = 'left' if hand == 'left' else ('right' if hand == 'right' else None)
         self.hit_event = None if shoulder is None else {
             'shoulder': shoulder,
@@ -115,7 +113,8 @@ class Player:
         health_bar_x = (frame_width - health_bar_width) // 2  # 中央に配置
         health_bar = pygame.Rect(health_bar_x, 20, health_bar_width, health_bar_height)
         pygame.draw.rect(screen, (255, 0, 0), health_bar)  # 赤い枠
-        pygame.draw.rect(screen, (0, 255, 0), (health_bar_x, 20, (self.health / 100) * health_bar_width, health_bar_height))  # 緑の体力ゲージ
+        ratio = 0 if self.max_health <= 0 else max(0.0, min(1.0, self.health / self.max_health))
+        pygame.draw.rect(screen, (0, 255, 0), (health_bar_x, 20, ratio * health_bar_width, health_bar_height))  # 緑の体力ゲージ
 
 # Mediapipe Pose をラップする検出クラス（1カメラ=1インスタンス推奨）
 class PoseDetector:
@@ -313,17 +312,24 @@ class PunchDetector:
                     gd.left_active = False
                     gd.left_in_ms = 0
                     gd.left_out_ms = gd.hold_ms  # すぐ再ONにならないようにホールド分加算
-                # 左パンチ: 相手の右ガードで防がれる
+                # 左パンチ: 相手の左ガードで防がれる
                 opp = self.owner.opponent if (self.owner is not None and getattr(self.owner, "opponent", None) is not None) else None
                 blocked = False
                 if opp is not None and getattr(opp, "guard_detector", None) is not None:
-                    blocked = bool(opp.guard_detector.right_active)
+                    blocked = bool(opp.guard_detector.left_active)
                 if blocked:
                     print(f"{self.player_name}: 左パンチはガードに防がれた v={v:.2f} dd={dd_norm:.2f}")
                     SoundManager.play("guard")
                     try:
                         if opp is not None and hasattr(opp, 'guard_block_event'):
-                            opp.guard_block_event['right'] = pygame.time.get_ticks()
+                            opp.guard_block_event['left'] = pygame.time.get_ticks()
+                    except Exception:
+                        pass
+                    # ガード成功時は攻撃側が反動ダメージ（パンチの半分）
+                    try:
+                        if self.owner is not None:
+                            half_dmg = max(1, int(self.owner.attack_power * 0.5))
+                            self.owner.take_damage(hand=None, amount=half_dmg)
                     except Exception:
                         pass
                 else:
@@ -351,17 +357,24 @@ class PunchDetector:
                     gd.right_active = False
                     gd.right_in_ms = 0
                     gd.right_out_ms = gd.hold_ms  # すぐ再ONにならないようにホールド分加算
-                # 右パンチ: 相手の左ガードで防がれる
+                # 右パンチ: 相手の右ガードで防がれる
                 opp = self.owner.opponent if (self.owner is not None and getattr(self.owner, "opponent", None) is not None) else None
                 blocked = False
                 if opp is not None and getattr(opp, "guard_detector", None) is not None:
-                    blocked = bool(opp.guard_detector.left_active)
+                    blocked = bool(opp.guard_detector.right_active)
                 if blocked:
                     print(f"{self.player_name}: 右パンチはガードに防がれた v={v:.2f} dd={dd_norm:.2f}")
                     SoundManager.play("guard")
                     try:
                         if opp is not None and hasattr(opp, 'guard_block_event'):
-                            opp.guard_block_event['left'] = pygame.time.get_ticks()
+                            opp.guard_block_event['right'] = pygame.time.get_ticks()
+                    except Exception:
+                        pass
+                    # ガード成功時は攻撃側が反動ダメージ（パンチの半分）
+                    try:
+                        if self.owner is not None:
+                            half_dmg = max(1, int(self.owner.attack_power * 0.5))
+                            self.owner.take_damage(hand=None, amount=half_dmg)
                     except Exception:
                         pass
                 else:
@@ -403,8 +416,8 @@ class Game:
         self.crop_x1 = self.crop_x2 = 0
         
         # プレイヤー1、2の初期設定
-        self.player1 = Player(health=100, attack_power=10, name="P1")
-        self.player2 = Player(health=100, attack_power=10, name="P2")
+        self.player1 = Player(health=300, attack_power=10, name="P1")
+        self.player2 = Player(health=300, attack_power=10, name="P2")
         self.player1.opponent = self.player2
         self.player2.opponent = self.player1
 
@@ -494,7 +507,7 @@ class Game:
 
             # 表示位置: 2つの肩の間を4等分し、端の次の位置に少しずらす
             # 左肩なら 1/4（左端の次）、右肩なら 3/4（右端の次）
-            t = 0.25 if shoulder_side == 'left' else 0.75  # 鏡映のため左右反転
+            t = 0.75 if shoulder_side == 'left' else 0.25  # 鏡映のため左右反転
             tx = int(ls_xy[0] + (rs_xy[0] - ls_xy[0]) * t)
             ty = int(ls_xy[1] + (rs_xy[1] - ls_xy[1]) * t)
 
@@ -662,7 +675,8 @@ class Game:
         health_bar_x = offset_x + (frame_width - health_bar_width) // 2  # 右側の画面に合わせて中央に配置
         health_bar = pygame.Rect(health_bar_x, 20, health_bar_width, health_bar_height)
         pygame.draw.rect(screen, (255, 0, 0), health_bar)  # 赤い枠
-        pygame.draw.rect(screen, (0, 255, 0), (health_bar_x, 20, (player.health / 100) * health_bar_width, health_bar_height))  # 緑の体力ゲージ
+        ratio = 0 if player.max_health <= 0 else max(0.0, min(1.0, player.health / player.max_health))
+        pygame.draw.rect(screen, (0, 255, 0), (health_bar_x, 20, ratio * health_bar_width, health_bar_height))  # 緑の体力ゲージ
 
     def draw_guard_box_with_offset(self, screen, player, offset_x, frame_width, frame_height):
         # 体力ゲージと同程度のサイズ感
