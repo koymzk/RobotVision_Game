@@ -416,12 +416,16 @@ class Game:
         if not ret1:
             print("カメラ1からフレームを取得できませんでした。")
             return False
+        # 入力直後に左右反転（ミラー表示）
+        frame1 = cv2.flip(frame1, 1)
 
         # カメラ2からフレームを取得
         ret2, frame2 = self.cap2.read()
         if not ret2:
             print("カメラ2からフレームを取得できませんでした。")
             return False
+        # 入力直後に左右反転（ミラー表示）
+        frame2 = cv2.flip(frame2, 1)
         
         frame1_rgb = cv2.cvtColor(frame1, cv2.COLOR_BGR2RGB)
         frame1_person_rgba, landmarks1 = self.pose1.process(frame1_rgb)
