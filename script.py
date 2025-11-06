@@ -47,6 +47,7 @@ class SoundManager:
 class Player:
     def __init__(self, health, attack_power, name="P"):
         self.health = health
+        self.max_health = health
         self.attack_power = attack_power
         self.damage_flash = False  # ダメージフラッシュの状態
         self.flash_duration = 5  # フラッシュの持続時間
@@ -112,7 +113,8 @@ class Player:
         health_bar_x = (frame_width - health_bar_width) // 2  # 中央に配置
         health_bar = pygame.Rect(health_bar_x, 20, health_bar_width, health_bar_height)
         pygame.draw.rect(screen, (255, 0, 0), health_bar)  # 赤い枠
-        pygame.draw.rect(screen, (0, 255, 0), (health_bar_x, 20, (self.health / 100) * health_bar_width, health_bar_height))  # 緑の体力ゲージ
+        ratio = 0 if self.max_health <= 0 else max(0.0, min(1.0, self.health / self.max_health))
+        pygame.draw.rect(screen, (0, 255, 0), (health_bar_x, 20, ratio * health_bar_width, health_bar_height))  # 緑の体力ゲージ
 
 # Mediapipe Pose をラップする検出クラス（1カメラ=1インスタンス推奨）
 class PoseDetector:
@@ -414,8 +416,8 @@ class Game:
         self.crop_x1 = self.crop_x2 = 0
         
         # プレイヤー1、2の初期設定
-        self.player1 = Player(health=100, attack_power=10, name="P1")
-        self.player2 = Player(health=100, attack_power=10, name="P2")
+        self.player1 = Player(health=300, attack_power=10, name="P1")
+        self.player2 = Player(health=300, attack_power=10, name="P2")
         self.player1.opponent = self.player2
         self.player2.opponent = self.player1
 
@@ -673,7 +675,8 @@ class Game:
         health_bar_x = offset_x + (frame_width - health_bar_width) // 2  # 右側の画面に合わせて中央に配置
         health_bar = pygame.Rect(health_bar_x, 20, health_bar_width, health_bar_height)
         pygame.draw.rect(screen, (255, 0, 0), health_bar)  # 赤い枠
-        pygame.draw.rect(screen, (0, 255, 0), (health_bar_x, 20, (player.health / 100) * health_bar_width, health_bar_height))  # 緑の体力ゲージ
+        ratio = 0 if player.max_health <= 0 else max(0.0, min(1.0, player.health / player.max_health))
+        pygame.draw.rect(screen, (0, 255, 0), (health_bar_x, 20, ratio * health_bar_width, health_bar_height))  # 緑の体力ゲージ
 
     def draw_guard_box_with_offset(self, screen, player, offset_x, frame_width, frame_height):
         # 体力ゲージと同程度のサイズ感
