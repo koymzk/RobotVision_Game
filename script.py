@@ -1046,32 +1046,24 @@ else:
                         face_crop = frame[y1:y2, x1:x2]
                         # 顔部分を別ウィンドウで表示
                         if face_crop.size > 0:
-                           #cv2.putText(
-                           #    face_crop,
-                           #    "LOSER!!",
-                           #    (20, 50),
-                           #    cv2.FONT_HERSHEY_DUPLEX,
-                           #    3,
-                           #    (0, 0, 255),
-                           #    3,
-                           #    cv2.LINE_AA
-                           #)
+                            # 顔画像を5倍に拡大
+                            face_crop = cv2.resize(face_crop, None, fx=8.0, fy=8.0, interpolation=cv2.INTER_LINEAR)
+                            cv2.putText(
+                                face_crop,
+                                "LOSER!!",
+                                (100, 100),
+                                cv2.FONT_HERSHEY_DUPLEX,
+                                3,
+                                (0, 0, 255),
+                                5,
+                                cv2.LINE_AA
+                            )
                             cv2.imshow("LOSER", face_crop)
-
-                # フルフレームにも検出結果を描画して表示（コンテキスト表示用）
-                vis = frame.copy()
-                if results.detections:
-                    for d in results.detections:
-                        try:
-                            mp_drawing.draw_detection(vis, d)
-                        except Exception:
-                            pass
-                cv2.imshow("CAM", vis)
 
                 # GUIイベントを処理するために waitKey を呼ぶ（これがないとウィンドウが表示されない）
                 key = cv2.waitKey(1) & 0xFF
-                # 'q' または ESC で終了
-                if key == ord('q') or key == 27:
+                # 'q' キーで終了
+                if key == ord('q'):
                     break
         cap.release()
         cv2.destroyAllWindows()
