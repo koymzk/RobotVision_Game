@@ -115,6 +115,21 @@ class Player:
         pygame.draw.rect(screen, (255, 0, 0), health_bar)  # 赤い枠
         ratio = 0 if self.max_health <= 0 else max(0.0, min(1.0, self.health / self.max_health))
         pygame.draw.rect(screen, (0, 255, 0), (health_bar_x, 20, ratio * health_bar_width, health_bar_height))  # 緑の体力ゲージ
+        # --- Guard Stamina Bar (HPの直下/同サイズ) ---
+        stam_bar_y = 20 + health_bar_height + 6
+        # 減った部分（背景）は灰色
+        pygame.draw.rect(screen, (80, 80, 80), (health_bar_x, stam_bar_y, health_bar_width, health_bar_height))
+        gd = getattr(self, 'guard_detector', None)
+        if gd is not None:
+            smax = max(1, int(getattr(gd, 'stamina_max_ms', 3000)))
+            sval = max(0, int(getattr(gd, 'stamina_ms', 0)))
+            sratio = max(0.0, min(1.0, sval / smax))
+            # 0からの充電中（ロックアウト中）は黄色、通常は青
+            charging_from_zero = getattr(gd, 'lockout', False) and (sval < smax)
+            fill_color = (255, 255, 0) if charging_from_zero else (0, 0, 255)
+            pygame.draw.rect(screen, fill_color, (health_bar_x, stam_bar_y, sratio * health_bar_width, health_bar_height))
+            # 薄い枠（視認性）
+            pygame.draw.rect(screen, (200, 200, 200), pygame.Rect(health_bar_x, stam_bar_y, health_bar_width, health_bar_height), 1)
 
 # Mediapipe Pose をラップする検出クラス（1カメラ=1インスタンス推奨）
 class PoseDetector:
@@ -187,6 +202,10 @@ class GuardDetector:
         self.left_out_ms = 0
         self.right_in_ms = 0
         self.right_out_ms = 0
+        # --- Guard Stamina（共有・3秒） ---
+        self.stamina_max_ms = 3000
+        self.stamina_ms = self.stamina_max_ms
+        self.lockout = False  # 0で尽きた後、満タンまで再ガード不可
 
     def _is_vertical_up(self, wrist, elbow):
         # Mediapipeのlandmarkは正規化座標 [0,1]。画像座標系でyは下に向かって増加
@@ -219,7 +238,9 @@ class GuardDetector:
             self.left_in_ms += dt_ms
             self.left_out_ms = 0
             if not self.left_active and self.left_in_ms >= self.hold_ms:
-                self.left_active = True
+                # ロックアウト中は不可。通常時は残量>0なら可
+                if (not self.lockout) and (self.stamina_ms > 0):
+                    self.left_active = True
                 # ガード ON（コンソール出力は抑制）
         else:
             self.left_out_ms += dt_ms
@@ -233,7 +254,9 @@ class GuardDetector:
             self.right_in_ms += dt_ms
             self.right_out_ms = 0
             if not self.right_active and self.right_in_ms >= self.hold_ms:
-                self.right_active = True
+                # ロックアウト中は不可。通常時は残量>0なら可
+                if (not self.lockout) and (self.stamina_ms > 0):
+                    self.right_active = True
                 # ガード ON（コンソール出力は抑制）
         else:
             self.right_out_ms += dt_ms
@@ -241,6 +264,27 @@ class GuardDetector:
             if self.right_active and self.right_out_ms >= self.hold_ms:
                 self.right_active = False
                 # ガード OFF（コンソール出力は抑制）
+
+        # --- Guard Stamina 更新 ---
+        guarding = self.left_active or self.right_active
+        if guarding:
+            # ガード中は等速で減少
+            self.stamina_ms -= dt_ms
+            if self.stamina_ms <= 0:
+                self.stamina_ms = 0
+                # 0で尽きたら強制解除＆ロックアウト
+                self.left_active = False
+                self.right_active = False
+                self.lockout = True
+        else:
+            # 非ガード中は等速で回復
+            if self.stamina_ms < self.stamina_max_ms:
+                self.stamina_ms += dt_ms
+                if self.stamina_ms >= self.stamina_max_ms:
+                    self.stamina_ms = self.stamina_max_ms
+                    # 満タンでロックアウト解除
+                    if self.lockout:
+                        self.lockout = False
 
 # パンチ検出器（肩に対する手首の相対Zの急変でパンチ発火）
 class PunchDetector:
@@ -677,6 +721,18 @@ class Game:
         pygame.draw.rect(screen, (255, 0, 0), health_bar)  # 赤い枠
         ratio = 0 if player.max_health <= 0 else max(0.0, min(1.0, player.health / player.max_health))
         pygame.draw.rect(screen, (0, 255, 0), (health_bar_x, 20, ratio * health_bar_width, health_bar_height))  # 緑の体力ゲージ
+        # --- Guard Stamina Bar (HPの直下/同サイズ) ---
+        stam_bar_y = 20 + health_bar_height + 6
+        pygame.draw.rect(screen, (80, 80, 80), (health_bar_x, stam_bar_y, health_bar_width, health_bar_height))
+        gd = getattr(player, 'guard_detector', None)
+        if gd is not None:
+            smax = max(1, int(getattr(gd, 'stamina_max_ms', 3000)))
+            sval = max(0, int(getattr(gd, 'stamina_ms', 0)))
+            sratio = max(0.0, min(1.0, sval / smax))
+            charging_from_zero = getattr(gd, 'lockout', False) and (sval < smax)
+            fill_color = (255, 255, 0) if charging_from_zero else (0, 0, 255)
+            pygame.draw.rect(screen, fill_color, (health_bar_x, stam_bar_y, sratio * health_bar_width, health_bar_height))
+            pygame.draw.rect(screen, (200, 200, 200), pygame.Rect(health_bar_x, stam_bar_y, health_bar_width, health_bar_height), 1)
 
     def draw_guard_box_with_offset(self, screen, player, offset_x, frame_width, frame_height):
         # 体力ゲージと同程度のサイズ感
