@@ -3,6 +3,7 @@ import pygame
 import mediapipe as mp
 import os
 import math
+import numpy as np
 
 # サウンド管理クラス
 class SoundManager:
@@ -137,14 +138,29 @@ class PoseDetector:
         """
         results = self.pose.process(frame_rgb)
         landmarks = results.pose_landmarks
+
+        # デフォルトは元フレーム
+        output_rgb = frame_rgb
+
+        # セグメンテーションが有効なら人物以外を緑で塗りつぶす
+        seg_mask = getattr(results, "segmentation_mask", None)
+        if seg_mask is not None:
+            # seg_mask は [H, W] のfloat32 (人物らしさ: 0..1)
+            cond = seg_mask > 0.5  # しきい値は必要に応じて調整
+            green_bg = np.zeros_like(frame_rgb)
+            green_bg[:] = (0, 255, 0)  # RGB の緑
+            # cond を各チャンネルへ拡張して合成
+            output_rgb = np.where(cond[..., None], frame_rgb, green_bg)
+
+        # ランドマーク描画は合成後のフレームに行う
         if landmarks is not None:
             self.mp_drawing.draw_landmarks(
-                frame_rgb,
+                output_rgb,
                 landmarks,
                 self.mp_pose.POSE_CONNECTIONS,
                 landmark_drawing_spec=self.mp_styles.get_default_pose_landmarks_style(),
             )
-        return frame_rgb, landmarks
+        return output_rgb, landmarks
 
     def close(self):
         if self.pose is not None:
@@ -345,8 +361,8 @@ class Game:
         self.player2.opponent = self.player1
 
         # Pose 検出器（カメラごとに1つ）とアクション認識器
-        self.pose1 = PoseDetector()
-        self.pose2 = PoseDetector()
+        self.pose1 = PoseDetector(enable_segmentation=True)
+        self.pose2 = PoseDetector(enable_segmentation=True)
         self.action_recognizer = ActionRecognizer()
 
         # 1つのウィンドウに2つのカメラ映像を表示するための画面設定
