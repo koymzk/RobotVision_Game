@@ -115,21 +115,52 @@ class Player:
         pygame.draw.rect(screen, (255, 0, 0), health_bar)  # 赤い枠
         ratio = 0 if self.max_health <= 0 else max(0.0, min(1.0, self.health / self.max_health))
         pygame.draw.rect(screen, (0, 255, 0), (health_bar_x, 20, ratio * health_bar_width, health_bar_height))  # 緑の体力ゲージ
-        # --- Guard Stamina Bar (HPの直下/同サイズ) ---
-        stam_bar_y = 20 + health_bar_height + 6
-        # 減った部分（背景）は灰色
-        pygame.draw.rect(screen, (80, 80, 80), (health_bar_x, stam_bar_y, health_bar_width, health_bar_height))
+        # --- Guard Stamina Circles (HPゲージ左右) ---
+        def _draw_pie(surface, center, radius, fraction, color):
+            # fraction in [0,1]
+            if fraction <= 0:
+                return
+            cx, cy = center
+            steps = max(2, int(60 * fraction))
+            theta_max = 2 * math.pi * fraction
+            pts = [(cx, cy)]
+            for i in range(steps + 1):
+                t = (i / steps) * theta_max - math.pi / 2  # 上(12時)から時計回り
+                x = int(cx + radius * math.cos(t))
+                y = int(cy + radius * math.sin(t))
+                pts.append((x, y))
+            try:
+                pygame.draw.polygon(surface, color, pts)
+            except Exception:
+                pass
+
         gd = getattr(self, 'guard_detector', None)
         if gd is not None:
-            smax = max(1, int(getattr(gd, 'stamina_max_ms', 3000)))
-            sval = max(0, int(getattr(gd, 'stamina_ms', 0)))
-            sratio = max(0.0, min(1.0, sval / smax))
-            # 0からの充電中（ロックアウト中）は黄色、通常は青
-            charging_from_zero = getattr(gd, 'lockout', False) and (sval < smax)
-            fill_color = (255, 255, 0) if charging_from_zero else (0, 0, 255)
-            pygame.draw.rect(screen, fill_color, (health_bar_x, stam_bar_y, sratio * health_bar_width, health_bar_height))
-            # 薄い枠（視認性）
-            pygame.draw.rect(screen, (200, 200, 200), pygame.Rect(health_bar_x, stam_bar_y, health_bar_width, health_bar_height), 1)
+            radius = int(health_bar_height * 2)
+            cy = 20 + health_bar_height // 2
+            pad = 12
+            left_center = (int(health_bar_x - pad - radius), int(cy))
+            right_center = (int(health_bar_x + health_bar_width + pad + radius), int(cy))
+            # 背景（欠け）灰色の円
+            pygame.draw.circle(screen, (80, 80, 80), left_center, radius)
+            pygame.draw.circle(screen, (80, 80, 80), right_center, radius)
+            # 左手
+            lsmax = max(1, int(getattr(gd, 'left_stamina_max_ms', 3000)))
+            lsval = max(0, int(getattr(gd, 'left_stamina_ms', 0)))
+            lsr = max(0.0, min(1.0, lsval / lsmax))
+            l_charging = getattr(gd, 'left_lockout', False) and (lsval < lsmax)
+            l_color = (255, 255, 0) if l_charging else (0, 0, 255)
+            _draw_pie(screen, left_center, radius, lsr, l_color)
+            # 右手
+            rsmax = max(1, int(getattr(gd, 'right_stamina_max_ms', 3000)))
+            rsval = max(0, int(getattr(gd, 'right_stamina_ms', 0)))
+            rsr = max(0.0, min(1.0, rsval / rsmax))
+            r_charging = getattr(gd, 'right_lockout', False) and (rsval < rsmax)
+            r_color = (255, 255, 0) if r_charging else (0, 0, 255)
+            _draw_pie(screen, right_center, radius, rsr, r_color)
+            # 枠線
+            pygame.draw.circle(screen, (200, 200, 200), left_center, radius, 1)
+            pygame.draw.circle(screen, (200, 200, 200), right_center, radius, 1)
 
 # Mediapipe Pose をラップする検出クラス（1カメラ=1インスタンス推奨）
 class PoseDetector:
@@ -202,10 +233,13 @@ class GuardDetector:
         self.left_out_ms = 0
         self.right_in_ms = 0
         self.right_out_ms = 0
-        # --- Guard Stamina（共有・3秒） ---
-        self.stamina_max_ms = 3000
-        self.stamina_ms = self.stamina_max_ms
-        self.lockout = False  # 0で尽きた後、満タンまで再ガード不可
+        # --- Guard Stamina（左右独立・各3秒） ---
+        self.left_stamina_max_ms = 3000
+        self.left_stamina_ms = self.left_stamina_max_ms
+        self.left_lockout = False
+        self.right_stamina_max_ms = 3000
+        self.right_stamina_ms = self.right_stamina_max_ms
+        self.right_lockout = False
 
     def _is_vertical_up(self, wrist, elbow):
         # Mediapipeのlandmarkは正規化座標 [0,1]。画像座標系でyは下に向かって増加
@@ -238,8 +272,8 @@ class GuardDetector:
             self.left_in_ms += dt_ms
             self.left_out_ms = 0
             if not self.left_active and self.left_in_ms >= self.hold_ms:
-                # ロックアウト中は不可。通常時は残量>0なら可
-                if (not self.lockout) and (self.stamina_ms > 0):
+                # 左手は左手スタミナ＆ロックアウトを参照
+                if (not self.left_lockout) and (self.left_stamina_ms > 0):
                     self.left_active = True
                 # ガード ON（コンソール出力は抑制）
         else:
@@ -254,8 +288,7 @@ class GuardDetector:
             self.right_in_ms += dt_ms
             self.right_out_ms = 0
             if not self.right_active and self.right_in_ms >= self.hold_ms:
-                # ロックアウト中は不可。通常時は残量>0なら可
-                if (not self.lockout) and (self.stamina_ms > 0):
+                if (not self.right_lockout) and (self.right_stamina_ms > 0):
                     self.right_active = True
                 # ガード ON（コンソール出力は抑制）
         else:
@@ -265,26 +298,35 @@ class GuardDetector:
                 self.right_active = False
                 # ガード OFF（コンソール出力は抑制）
 
-        # --- Guard Stamina 更新 ---
-        guarding = self.left_active or self.right_active
-        if guarding:
-            # ガード中は等速で減少
-            self.stamina_ms -= dt_ms
-            if self.stamina_ms <= 0:
-                self.stamina_ms = 0
-                # 0で尽きたら強制解除＆ロックアウト
+        # --- Guard Stamina 更新（左右独立） ---
+        # 左手
+        if self.left_active:
+            self.left_stamina_ms -= dt_ms
+            if self.left_stamina_ms <= 0:
+                self.left_stamina_ms = 0
                 self.left_active = False
-                self.right_active = False
-                self.lockout = True
+                self.left_lockout = True
         else:
-            # 非ガード中は等速で回復
-            if self.stamina_ms < self.stamina_max_ms:
-                self.stamina_ms += dt_ms
-                if self.stamina_ms >= self.stamina_max_ms:
-                    self.stamina_ms = self.stamina_max_ms
-                    # 満タンでロックアウト解除
-                    if self.lockout:
-                        self.lockout = False
+            if self.left_stamina_ms < self.left_stamina_max_ms:
+                self.left_stamina_ms += dt_ms
+                if self.left_stamina_ms >= self.left_stamina_max_ms:
+                    self.left_stamina_ms = self.left_stamina_max_ms
+                    if self.left_lockout:
+                        self.left_lockout = False
+        # 右手
+        if self.right_active:
+            self.right_stamina_ms -= dt_ms
+            if self.right_stamina_ms <= 0:
+                self.right_stamina_ms = 0
+                self.right_active = False
+                self.right_lockout = True
+        else:
+            if self.right_stamina_ms < self.right_stamina_max_ms:
+                self.right_stamina_ms += dt_ms
+                if self.right_stamina_ms >= self.right_stamina_max_ms:
+                    self.right_stamina_ms = self.right_stamina_max_ms
+                    if self.right_lockout:
+                        self.right_lockout = False
 
 # パンチ検出器（肩に対する手首の相対Zの急変でパンチ発火）
 class PunchDetector:
@@ -721,18 +763,47 @@ class Game:
         pygame.draw.rect(screen, (255, 0, 0), health_bar)  # 赤い枠
         ratio = 0 if player.max_health <= 0 else max(0.0, min(1.0, player.health / player.max_health))
         pygame.draw.rect(screen, (0, 255, 0), (health_bar_x, 20, ratio * health_bar_width, health_bar_height))  # 緑の体力ゲージ
-        # --- Guard Stamina Bar (HPの直下/同サイズ) ---
-        stam_bar_y = 20 + health_bar_height + 6
-        pygame.draw.rect(screen, (80, 80, 80), (health_bar_x, stam_bar_y, health_bar_width, health_bar_height))
+        # --- Guard Stamina Circles (HPゲージ左右) ---
+        def _draw_pie(surface, center, radius, fraction, color):
+            if fraction <= 0:
+                return
+            cx, cy = center
+            steps = max(2, int(60 * fraction))
+            theta_max = 2 * math.pi * fraction
+            pts = [(cx, cy)]
+            for i in range(steps + 1):
+                t = (i / steps) * theta_max - math.pi / 2
+                x = int(cx + radius * math.cos(t))
+                y = int(cy + radius * math.sin(t))
+                pts.append((x, y))
+            try:
+                pygame.draw.polygon(surface, color, pts)
+            except Exception:
+                pass
+
         gd = getattr(player, 'guard_detector', None)
         if gd is not None:
-            smax = max(1, int(getattr(gd, 'stamina_max_ms', 3000)))
-            sval = max(0, int(getattr(gd, 'stamina_ms', 0)))
-            sratio = max(0.0, min(1.0, sval / smax))
-            charging_from_zero = getattr(gd, 'lockout', False) and (sval < smax)
-            fill_color = (255, 255, 0) if charging_from_zero else (0, 0, 255)
-            pygame.draw.rect(screen, fill_color, (health_bar_x, stam_bar_y, sratio * health_bar_width, health_bar_height))
-            pygame.draw.rect(screen, (200, 200, 200), pygame.Rect(health_bar_x, stam_bar_y, health_bar_width, health_bar_height), 1)
+            radius = int(health_bar_height * 2)
+            cy = 20 + health_bar_height // 2
+            pad = 12
+            left_center = (int(health_bar_x - pad - radius), int(cy))
+            right_center = (int(health_bar_x + health_bar_width + pad + radius), int(cy))
+            pygame.draw.circle(screen, (80, 80, 80), left_center, radius)
+            pygame.draw.circle(screen, (80, 80, 80), right_center, radius)
+            lsmax = max(1, int(getattr(gd, 'left_stamina_max_ms', 3000)))
+            lsval = max(0, int(getattr(gd, 'left_stamina_ms', 0)))
+            lsr = max(0.0, min(1.0, lsval / lsmax))
+            l_charging = getattr(gd, 'left_lockout', False) and (lsval < lsmax)
+            l_color = (255, 255, 0) if l_charging else (0, 0, 255)
+            _draw_pie(screen, left_center, radius, lsr, l_color)
+            rsmax = max(1, int(getattr(gd, 'right_stamina_max_ms', 3000)))
+            rsval = max(0, int(getattr(gd, 'right_stamina_ms', 0)))
+            rsr = max(0.0, min(1.0, rsval / rsmax))
+            r_charging = getattr(gd, 'right_lockout', False) and (rsval < rsmax)
+            r_color = (255, 255, 0) if r_charging else (0, 0, 255)
+            _draw_pie(screen, right_center, radius, rsr, r_color)
+            pygame.draw.circle(screen, (200, 200, 200), left_center, radius, 1)
+            pygame.draw.circle(screen, (200, 200, 200), right_center, radius, 1)
 
     def draw_guard_box_with_offset(self, screen, player, offset_x, frame_width, frame_height):
         # 体力ゲージと同程度のサイズ感
