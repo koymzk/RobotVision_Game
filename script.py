@@ -64,18 +64,15 @@ class Player:
         self.hit_event = None  # {'shoulder': 'left'|'right', 't0': ms}
         self.guard_block_event = {'left': None, 'right': None}  # ガード成功の発光トリガ（手ごと）
     
-    def take_damage(self, hand=None):
+    def take_damage(self, hand=None, amount=None):
         SoundManager.play("beam")
-        self.health -= self.attack_power
-        # フラッシュは一旦コメントアウト（仕様により画面全体の赤点滅は停止）
-        # self.damage_flash = True
-        # self.flash_timer = self.flash_duration
-        # 被弾エフェクト（肩に画像を一定時間表示）開始
+        dmg = self.attack_power if amount is None else amount
+        self.health -= dmg
         try:
             t0 = pygame.time.get_ticks()
         except Exception:
             t0 = 0
-        # 攻撃手と同じ側の肩に表示（left/right）
+        # 攻撃手の指定がない場合は被弾エフェクトなし
         shoulder = 'left' if hand == 'left' else ('right' if hand == 'right' else None)
         self.hit_event = None if shoulder is None else {
             'shoulder': shoulder,
@@ -326,6 +323,13 @@ class PunchDetector:
                             opp.guard_block_event['left'] = pygame.time.get_ticks()
                     except Exception:
                         pass
+                    # ガード成功時は攻撃側が反動ダメージ（パンチの半分）
+                    try:
+                        if self.owner is not None:
+                            half_dmg = max(1, int(self.owner.attack_power * 0.5))
+                            self.owner.take_damage(hand=None, amount=half_dmg)
+                    except Exception:
+                        pass
                 else:
                     print(f"{self.player_name}: 左パンチ！ v={v:.2f} dd={dd_norm:.2f}")
                     opp.take_damage(hand='left') if opp is not None else None
@@ -362,6 +366,13 @@ class PunchDetector:
                     try:
                         if opp is not None and hasattr(opp, 'guard_block_event'):
                             opp.guard_block_event['right'] = pygame.time.get_ticks()
+                    except Exception:
+                        pass
+                    # ガード成功時は攻撃側が反動ダメージ（パンチの半分）
+                    try:
+                        if self.owner is not None:
+                            half_dmg = max(1, int(self.owner.attack_power * 0.5))
+                            self.owner.take_damage(hand=None, amount=half_dmg)
                     except Exception:
                         pass
                 else:
