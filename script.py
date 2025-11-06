@@ -306,9 +306,16 @@ class PunchDetector:
             else:
                 dd_norm = 0.0
             if v >= self.vel_thresh and dd_norm >= self.ext_thresh and self.left_cd <= 0:
-                print(f"{self.player_name}: 左パンチ！ v={v:.2f} dd={dd_norm:.2f}")
-                if self.owner is not None and getattr(self.owner, "opponent", None) is not None:
-                    self.owner.opponent.take_damage(hand='left')
+                # 左パンチ: 相手の右ガードで防がれる
+                opp = self.owner.opponent if (self.owner is not None and getattr(self.owner, "opponent", None) is not None) else None
+                blocked = False
+                if opp is not None and getattr(opp, "guard_detector", None) is not None:
+                    blocked = bool(opp.guard_detector.right_active)
+                if blocked:
+                    print(f"{self.player_name}: 左パンチはガードに防がれた v={v:.2f} dd={dd_norm:.2f}")
+                else:
+                    print(f"{self.player_name}: 左パンチ！ v={v:.2f} dd={dd_norm:.2f}")
+                    opp.take_damage(hand='left') if opp is not None else None
                 self.left_cd = self.cooldown_ms
         self.prev_left_rel_z = left_rel_z
         self.prev_left_dist_ws = left_dist_ws
@@ -325,9 +332,16 @@ class PunchDetector:
             else:
                 dd_norm = 0.0
             if v >= self.vel_thresh and dd_norm >= self.ext_thresh and self.right_cd <= 0:
-                print(f"{self.player_name}: 右パンチ！ v={v:.2f} dd={dd_norm:.2f}")
-                if self.owner is not None and getattr(self.owner, "opponent", None) is not None:
-                    self.owner.opponent.take_damage(hand='right')
+                # 右パンチ: 相手の左ガードで防がれる
+                opp = self.owner.opponent if (self.owner is not None and getattr(self.owner, "opponent", None) is not None) else None
+                blocked = False
+                if opp is not None and getattr(opp, "guard_detector", None) is not None:
+                    blocked = bool(opp.guard_detector.left_active)
+                if blocked:
+                    print(f"{self.player_name}: 右パンチはガードに防がれた v={v:.2f} dd={dd_norm:.2f}")
+                else:
+                    print(f"{self.player_name}: 右パンチ！ v={v:.2f} dd={dd_norm:.2f}")
+                    opp.take_damage(hand='right') if opp is not None else None
                 self.right_cd = self.cooldown_ms
         self.prev_right_rel_z = right_rel_z
         self.prev_right_dist_ws = right_dist_ws
