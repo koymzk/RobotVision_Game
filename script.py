@@ -64,6 +64,8 @@ class Player:
         self.punch_detector = PunchDetector(player_name=self.name, owner=self)
         self.hit_event = None  # {'shoulder': 'left'|'right', 't0': ms}
         self.guard_block_event = {'left': None, 'right': None}  # ガード成功の発光トリガ（手ごと）
+        # ガード反射ダメージ用のフラッシュ（枠表示）
+        self.reflect_event = None  # {'t0': ms, 'dur': ms}
     
     def take_damage(self, hand=None, amount=None):
         SoundManager.play("beam")
@@ -79,6 +81,17 @@ class Player:
             'shoulder': shoulder,
             't0': t0,
         }
+
+    def take_reflect_damage(self, amount):
+        # 反射ダメージ：サウンドなし、肩エフェクトなし
+        dmg = self.attack_power if amount is None else amount
+        self.health -= dmg
+        try:
+            t0 = pygame.time.get_ticks()
+        except Exception:
+            t0 = 0
+        # 反射専用の画面枠フラッシュ（0.5秒）
+        self.reflect_event = {'t0': t0, 'dur': 500}
     
     def update_flash(self):
         if self.damage_flash:
@@ -427,7 +440,7 @@ class PunchDetector:
                     try:
                         if self.owner is not None:
                             half_dmg = max(1, int(self.owner.attack_power * 0.5))
-                            self.owner.take_damage(hand=None, amount=half_dmg)
+                            self.owner.take_reflect_damage(amount=half_dmg)
                     except Exception:
                         pass
                 else:
@@ -472,7 +485,7 @@ class PunchDetector:
                     try:
                         if self.owner is not None:
                             half_dmg = max(1, int(self.owner.attack_power * 0.5))
-                            self.owner.take_damage(hand=None, amount=half_dmg)
+                            self.owner.take_reflect_damage(amount=half_dmg)
                     except Exception:
                         pass
                 else:
@@ -545,6 +558,42 @@ class Game:
         # フォント
         pygame.font.init()
         self.ui_font = pygame.font.SysFont(None, 22)
+        # 反射ダメージ時の赤枠表示設定
+        self.reflect_border_ms = 500
+        # おおよそ1cm程度の幅（解像度720p基準で約28px）。必要なら調整可。
+        self.reflect_border_px = max(8, int(self.frame_height * 0.04))
+        self.reflect_border_color = (255, 0, 0)
+    def _draw_reflect_border_for_player(self, screen, player, player_idx):
+        ev = getattr(player, 'reflect_event', None)
+        if not ev:
+            return
+        try:
+            now = pygame.time.get_ticks()
+            if now - ev.get('t0', 0) > ev.get('dur', self.reflect_border_ms):
+                player.reflect_event = None
+                return
+        except Exception:
+            player.reflect_event = None
+            return
+        # プレイヤーごとの描画領域
+        if player_idx == 1:
+            area_rect = pygame.Rect(0, 0, self.area_width, self.frame_height)
+        else:
+            area_rect = pygame.Rect(self.area_width, 0, self.area_width, self.frame_height)
+        bw = int(getattr(self, 'reflect_border_px', 28))
+        col = getattr(self, 'reflect_border_color', (255, 0, 0))
+        # 上下左右の枠を描く
+        try:
+            # 上
+            pygame.draw.rect(screen, col, pygame.Rect(area_rect.left, area_rect.top, area_rect.width, bw))
+            # 下
+            pygame.draw.rect(screen, col, pygame.Rect(area_rect.left, area_rect.bottom - bw, area_rect.width, bw))
+            # 左
+            pygame.draw.rect(screen, col, pygame.Rect(area_rect.left, area_rect.top, bw, area_rect.height))
+            # 右
+            pygame.draw.rect(screen, col, pygame.Rect(area_rect.right - bw, area_rect.top, bw, area_rect.height))
+        except Exception:
+            pass
         # A.T.フィールド画像とスケール係数（肩幅基準）
         self.atfield_img = None
         self.atfield_scale = 2.0  # 肩幅[px] × 係数 が画像の一辺になる（2倍）
@@ -725,6 +774,7 @@ class Game:
             # 幅が足りない場合は左寄せ（中央寄せにしたい場合はオフセット追加）
             self.screen.blit(frame1_surface, (0, 0))
         self.player1.update_flash()
+        self._draw_reflect_border_for_player(self.screen, self.player1, player_idx=1)
         # ガード中の手の中点にATフィールドを描画
         self._draw_atfield_for_player(self.screen, self.player1, player_idx=1)
         # 画面全体が赤色になる機能は一時停止（コメントアウト）
@@ -744,6 +794,7 @@ class Game:
         else:
             self.screen.blit(frame2_surface, (self.area_width, 0))
         self.player2.update_flash()
+        self._draw_reflect_border_for_player(self.screen, self.player2, player_idx=2)
         # ガード中の手の中点にATフィールドを描画
         self._draw_atfield_for_player(self.screen, self.player2, player_idx=2)
         # 画面全体が赤色になる機能は一時停止（コメントアウト）
