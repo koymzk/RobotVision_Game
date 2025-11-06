@@ -911,15 +911,18 @@ class Game:
 
     def run(self):
         running = True
+        face = None
         while running:
             running = self.handle_events()
             if not running:
                 break
             self.handle_input()
-            if self.update() == 1:
+            # update() は副作用があるため一度だけ呼ぶ
+            res = self.update()
+            if res == 1:
                 face = 0
                 break
-            elif self.update() == 2:
+            elif res == 2:
                 face = 1
                 break
             
@@ -932,11 +935,25 @@ class Game:
         self.cap2.release()
         pygame.quit()
         
-            # Mediapipe Face Detection モジュールの初期化
-        mp_face_detection = mp.solutions.face_detection
-        mp_drawing = mp.solutions.drawing_utils
-        # カメラ入力（または画像ファイルも可）
-        cap = cv2.VideoCapture(face)
+        return face
+
+
+
+    # ゲームを開始
+game = Game()
+face = game.run()
+
+if face is None:
+    print("No winner determined; skipping face detection.")
+else:
+    # Mediapipe Face Detection モジュールの初期化
+    mp_face_detection = mp.solutions.face_detection
+    mp_drawing = mp.solutions.drawing_utils
+    # カメラ入力（または画像ファイルも可）
+    cap = cv2.VideoCapture(face)
+    if not cap.isOpened():
+        print(f"Camera {face} could not be opened.")
+    else:
         with mp_face_detection.FaceDetection(model_selection=0, min_detection_confidence=0.5) as face_detection:
             while True:
                 ret, frame = cap.read()
@@ -945,7 +962,8 @@ class Game:
                 # 画像をRGBに変換（MediapipeはRGB入力を想定）
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 results = face_detection.process(rgb_frame)
-                # 顔検出結果がある場合
+
+                # 可視化: 検出結果があれば顔を切り抜いてLOSERウィンドウに表示
                 if results.detections:
                     for detection in results.detections:
                         bboxC = detection.location_data.relative_bounding_box
@@ -958,24 +976,32 @@ class Game:
                         face_crop = frame[y1:y2, x1:x2]
                         # 顔部分を別ウィンドウで表示
                         if face_crop.size > 0:
-                            cv2.putText(
-                                face_crop,
-                                "LOSER!!",
-                                (20, 50),
-                                cv2.FONT_HERSHEY_DUPLEX,
-                                3,
-                                (0, 0, 255),
-                                5,
-                                cv2.LINE_AA
-                            )
+                           #cv2.putText(
+                           #    face_crop,
+                           #    "LOSER!!",
+                           #    (20, 50),
+                           #    cv2.FONT_HERSHEY_DUPLEX,
+                           #    3,
+                           #    (0, 0, 255),
+                           #    3,
+                           #    cv2.LINE_AA
+                           #)
                             cv2.imshow("LOSER", face_crop)
-                keys = pygame.key.get_pressed()
-                if keys[pygame.K_q]:
+
+                # フルフレームにも検出結果を描画して表示（コンテキスト表示用）
+                vis = frame.copy()
+                if results.detections:
+                    for d in results.detections:
+                        try:
+                            mp_drawing.draw_detection(vis, d)
+                        except Exception:
+                            pass
+                cv2.imshow("CAM", vis)
+
+                # GUIイベントを処理するために waitKey を呼ぶ（これがないとウィンドウが表示されない）
+                key = cv2.waitKey(1) & 0xFF
+                # 'q' または ESC で終了
+                if key == ord('q') or key == 27:
                     break
-            cap.release()
-            cv2.destroyAllWindows()
-
-
-# ゲームを開始
-game = Game()
-game.run()
+        cap.release()
+        cv2.destroyAllWindows()
