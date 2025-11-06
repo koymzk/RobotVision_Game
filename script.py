@@ -134,25 +134,16 @@ class PoseDetector:
     def process(self, frame_rgb):
         """
         入力: RGBの画像(numpy array)
-        出力: (骨格描画済みRGB画像, landmarks)
+        出力: (人物のみRGBA画像, landmarks)
         """
         results = self.pose.process(frame_rgb)
         landmarks = results.pose_landmarks
 
-        # デフォルトは元フレーム
-        output_rgb = frame_rgb
-
-        # セグメンテーションが有効なら人物以外を緑で塗りつぶす
+        # --- セグメンテーションを用いて人物のみRGBAで返す（人物=不透明/背景=透明） ---
         seg_mask = getattr(results, "segmentation_mask", None)
-        if seg_mask is not None:
-            # seg_mask は [H, W] のfloat32 (人物らしさ: 0..1)
-            cond = seg_mask > 0.5  # しきい値は必要に応じて調整
-            green_bg = np.zeros_like(frame_rgb)
-            green_bg[:] = (0, 255, 0)  # RGB の緑
-            # cond を各チャンネルへ拡張して合成
-            output_rgb = np.where(cond[..., None], frame_rgb, green_bg)
 
-        # ランドマーク描画は合成後のフレームに行う
+        # ランドマーク描画はまずRGBに行う
+        output_rgb = frame_rgb.copy()
         if landmarks is not None:
             self.mp_drawing.draw_landmarks(
                 output_rgb,
@@ -160,7 +151,18 @@ class PoseDetector:
                 self.mp_pose.POSE_CONNECTIONS,
                 landmark_drawing_spec=self.mp_styles.get_default_pose_landmarks_style(),
             )
-        return output_rgb, landmarks
+
+        h, w = output_rgb.shape[:2]
+        if seg_mask is not None:
+            # エッジを少しシャープにするソフトしきい値
+            alpha_f = np.clip((seg_mask - 0.1) / 0.2, 0.0, 1.0)  # [0,1]
+            alpha = (alpha_f * 255).astype(np.uint8)
+        else:
+            # セグメントが無い場合はカメラを隠す（背景だけ見える）
+            alpha = np.zeros((h, w), dtype=np.uint8)
+
+        output_rgba = np.dstack([output_rgb, alpha])  # RGBA
+        return output_rgba, landmarks
 
     def close(self):
         if self.pose is not None:
@@ -353,6 +355,12 @@ class Game:
         # 画面サイズをHD解像度 (1280x720) に設定
         self.frame_width = 1280
         self.frame_height = 720
+        # 各プレイヤーの表示エリア幅（画面を左右に二分）
+        self.area_width = self.frame_width // 2
+        # 表示用のスケール/クロップ（毎フレーム更新）
+        self.w_scaled1 = self.w_scaled2 = 0
+        self.h_scaled1 = self.h_scaled2 = 0
+        self.crop_x1 = self.crop_x2 = 0
         
         # プレイヤー1、2の初期設定
         self.player1 = Player(health=100, attack_power=10, name="P1")
@@ -368,6 +376,16 @@ class Game:
         # 1つのウィンドウに2つのカメラ映像を表示するための画面設定
         self.screen = pygame.display.set_mode((self.frame_width, self.frame_height))
         pygame.display.set_caption("2人プレイヤー - 2台のカメラ映像")
+        # 背景画像の読み込み（全体に1枚を敷く）
+        self.bg_surf = None
+        try:
+            bg = pygame.image.load("./images/background.PNG")
+            # 透過付きPNGなら convert_alpha、そうでなければ convert
+            bg = bg.convert_alpha() if bg.get_alpha() else bg.convert()
+            self.bg_surf = pygame.transform.smoothscale(bg, (self.frame_width, self.frame_height))
+        except Exception as e:
+            print(f"背景画像の読み込みに失敗しました: {e}")
+            self.bg_surf = None
         # 経過時間管理（ミリ秒）
         self.prev_ticks = pygame.time.get_ticks()
         # フォント
@@ -405,56 +423,59 @@ class Game:
             print("カメラ2からフレームを取得できませんでした。")
             return False
         
-        # MediaPipe処理は回転前（カメラの生フレーム基準）で実施
         frame1_rgb = cv2.cvtColor(frame1, cv2.COLOR_BGR2RGB)
-        frame1_annotated_rgb, landmarks1 = self.pose1.process(frame1_rgb)
+        frame1_person_rgba, landmarks1 = self.pose1.process(frame1_rgb)
 
-        # 表示用に90度回転（骨格描画済み画像を回転）
-        frame1_rotated_annotated = cv2.rotate(frame1_annotated_rgb, cv2.ROTATE_90_COUNTERCLOCKWISE)
-
-        # 表示用リサイズ（縦横比維持で左半分の幅に）
-        h1, w1 = frame1_rotated_annotated.shape[:2]
-        aspect_ratio1 = w1 / h1
-        new_width1 = self.frame_width // 2
-        new_height1 = int(new_width1 / aspect_ratio1)
-        self.new_width1, self.new_height1 = new_width1, new_height1
-        frame1_disp = cv2.resize(frame1_rotated_annotated, (new_width1, new_height1))
+        # 表示用：高さをエリア高に一致させる（左右ははみ出し可。はみ出しはクロップ）
+        h1, w1 = frame1_person_rgba.shape[:2]
+        scale1 = self.frame_height / h1
+        new_width1 = int(w1 * scale1)
+        new_height1 = self.frame_height
+        self.w_scaled1, self.h_scaled1 = new_width1, new_height1
+        # はみ出す分は中央からクロップ
+        self.crop_x1 = max((new_width1 - self.area_width) // 2, 0)
+        frame1_disp = cv2.resize(frame1_person_rgba, (new_width1, new_height1), interpolation=cv2.INTER_LINEAR)
+        frame1_disp = np.ascontiguousarray(frame1_disp)
+        frame1_surface = pygame.image.frombuffer(frame1_disp.tobytes(), (new_width1, new_height1), 'RGBA').convert_alpha()
 
         # プレイヤーへランドマークを渡して将来のアクション判定に利用
         self.player1.set_pose_landmarks(landmarks1)
         self.player1.update_action(self.action_recognizer)
         self.player1.update_guard(dt_ms)
         self.player1.update_punch(dt_ms)
-
-        frame1_surface = pygame.surfarray.make_surface(frame1_disp)
         
-        # MediaPipe処理は回転前（カメラの生フレーム基準）で実施
         frame2_rgb = cv2.cvtColor(frame2, cv2.COLOR_BGR2RGB)
-        frame2_annotated_rgb, landmarks2 = self.pose2.process(frame2_rgb)
+        frame2_person_rgba, landmarks2 = self.pose2.process(frame2_rgb)
 
-        # 表示用に90度回転（骨格描画済み画像を回転）
-        frame2_rotated_annotated = cv2.rotate(frame2_annotated_rgb, cv2.ROTATE_90_COUNTERCLOCKWISE)
-
-        # 表示用リサイズ（縦横比維持で右半分の幅に）
-        h2, w2 = frame2_rotated_annotated.shape[:2]
-        aspect_ratio2 = w2 / h2
-        new_width2 = self.frame_width // 2
-        new_height2 = int(new_width2 / aspect_ratio2)
-        self.new_width2, self.new_height2 = new_width2, new_height2
-        frame2_disp = cv2.resize(frame2_rotated_annotated, (new_width2, new_height2))
+        # 表示用：高さをエリア高に一致させる（左右ははみ出し可。はみ出しはクロップ）
+        h2, w2 = frame2_person_rgba.shape[:2]
+        scale2 = self.frame_height / h2
+        new_width2 = int(w2 * scale2)
+        new_height2 = self.frame_height
+        self.w_scaled2, self.h_scaled2 = new_width2, new_height2
+        self.crop_x2 = max((new_width2 - self.area_width) // 2, 0)
+        frame2_disp = cv2.resize(frame2_person_rgba, (new_width2, new_height2), interpolation=cv2.INTER_LINEAR)
+        frame2_disp = np.ascontiguousarray(frame2_disp)
+        frame2_surface = pygame.image.frombuffer(frame2_disp.tobytes(), (new_width2, new_height2), 'RGBA').convert_alpha()
 
         self.player2.set_pose_landmarks(landmarks2)
         self.player2.update_action(self.action_recognizer)
         self.player2.update_guard(dt_ms)
         self.player2.update_punch(dt_ms)
-
-        frame2_surface = pygame.surfarray.make_surface(frame2_disp)
         
-        # 画面を黒でクリア
-        self.screen.fill((0,0,0))
+        # 背景を描画（全体に1枚）
+        if getattr(self, "bg_surf", None) is not None:
+            self.screen.blit(self.bg_surf, (0, 0))
+        else:
+            self.screen.fill((0, 0, 0))
         
-        # 左側にカメラ1の映像を表示
-        self.screen.blit(frame1_surface, (0, 0))
+        # 左側にカメラ1の映像を表示（クロップ対応）
+        if self.w_scaled1 > self.area_width:
+            src_rect1 = pygame.Rect(self.crop_x1, 0, self.area_width, self.frame_height)
+            self.screen.blit(frame1_surface, (0, 0), src_rect1)
+        else:
+            # 幅が足りない場合は左寄せ（中央寄せにしたい場合はオフセット追加）
+            self.screen.blit(frame1_surface, (0, 0))
         self.player1.update_flash()
         # 画面全体が赤色になる機能は一時停止（コメントアウト）
         # if self.player1.damage_flash:
@@ -463,11 +484,15 @@ class Game:
         #     self.screen.blit(flash_surface, (0, 0))
         self._draw_laser_for_player(self.screen, self.player1, player_idx=1)
         # プレイヤー1の体力ゲージは左側の中央に表示
-        self.player1.draw_health_bar(self.screen, new_width1, self.frame_height)
-        self.draw_guard_box_with_offset(self.screen, self.player1, 0, new_width1, self.frame_height)
+        self.player1.draw_health_bar(self.screen, self.area_width, self.frame_height)
+        self.draw_guard_box_with_offset(self.screen, self.player1, 0, self.area_width, self.frame_height)
 
-        # 右側にカメラ2の映像を表示
-        self.screen.blit(frame2_surface, (new_width1, 0))
+        # 右側にカメラ2の映像を表示（クロップ対応）
+        if self.w_scaled2 > self.area_width:
+            src_rect2 = pygame.Rect(self.crop_x2, 0, self.area_width, self.frame_height)
+            self.screen.blit(frame2_surface, (self.area_width, 0), src_rect2)
+        else:
+            self.screen.blit(frame2_surface, (self.area_width, 0))
         self.player2.update_flash()
         # 画面全体が赤色になる機能は一時停止（コメントアウト）
         # if self.player2.damage_flash:
@@ -476,18 +501,8 @@ class Game:
         #     self.screen.blit(flash_surface, (new_width1, 0))
         self._draw_laser_for_player(self.screen, self.player2, player_idx=2)
         # プレイヤー2の体力ゲージは右側の中央に表示
-        # 右側に表示するために描画位置を調整
-        # 一時的に画面を切り取って描画する方法ではなく、draw_health_barの引数を変えて描画位置を調整
-        # 体力ゲージのx座標はdraw_health_bar内で中央に配置されるため、画面を右側にずらすためにsurfaceを部分的に描画するか、
-        # ここではdraw_health_barの引数をnew_width2にして描画し、surfaceを右側にずらすためにスクリーンの描画位置を調整
-        # なので、draw_health_bar内のx座標計算はnew_width2の中央
-        # しかしdraw_health_barはscreenに直接描画するため、体力ゲージの位置を右側にずらすためにsurfaceを部分的に描画するのは難しい
-        # よって、draw_health_barにscreenを渡すのではなく、右側の部分だけ切り出したsurfaceを作成して描画する方法を取る
-        # ここでは簡単に、体力ゲージを右側の画面に合わせて描画するためにオフセットを加えるラッパー関数を作成する
-        # もしくはdraw_health_barのx座標計算を変更するために、draw_health_barにoffset_xを追加して対応する
-        # ここではoffset_xを追加して対応する
-        self.draw_health_bar_with_offset(self.screen, self.player2, new_width1, new_width2, self.frame_height)
-        self.draw_guard_box_with_offset(self.screen, self.player2, new_width1, new_width2, self.frame_height)
+        self.draw_health_bar_with_offset(self.screen, self.player2, self.area_width, self.area_width, self.frame_height)
+        self.draw_guard_box_with_offset(self.screen, self.player2, self.area_width, self.area_width, self.frame_height)
 
         # 画面を更新
         pygame.display.update()
@@ -556,18 +571,23 @@ class Game:
         screen.blit(coord_surf2, (x + coord_rect2.x, y + coord_rect2.y))
 
     def _landmark_to_display_xy(self, lm, player_idx):
-        """landmark正規化座標(lm.x,lm.y)を、回転後・リサイズ後・配置後の画面座標へ変換。
-        player_idx: 1 (左画面) or 2 (右画面)
-        回転は90度CCW、x' = y、y' = 1 - x で近似。
+        """landmark正規化座標(lm.x,lm.y)を、実表示の画面座標へ変換。
+        高さフィット（frame_height）＆左右クロップ（中央）前提。
         """
         if player_idx == 1:
-            offset_x, width, height = 0, self.new_width1, self.new_height1
+            offset_x = 0
+            width_scaled = self.w_scaled1
+            crop_x = self.crop_x1
         else:
-            offset_x, width, height = self.new_width1, self.new_width2, self.new_height2
-        x_rot_norm = lm.y
-        y_rot_norm = 1.0 - lm.x
-        x_pix = offset_x + int(x_rot_norm * width)
-        y_pix = int(y_rot_norm * height)
+            offset_x = self.area_width
+            width_scaled = self.w_scaled2
+            crop_x = self.crop_x2
+        # 高さは常に frame_height に一致
+        x_scaled = lm.x * width_scaled
+        y_scaled = lm.y * self.frame_height
+        # クロップ分を引き、描画エリアのオフセットを足す
+        x_pix = int(offset_x + x_scaled - crop_x)
+        y_pix = int(y_scaled)
         return x_pix, y_pix
 
     def _draw_laser_for_player(self, screen, player, player_idx):
@@ -595,9 +615,9 @@ class Game:
 
         # 画面下辺の5等分：左中間=0.1W, 右中間=0.9W
         if player_idx == 1:
-            offset_x, W, H = 0, self.new_width1, self.new_height1
+            offset_x, W, H = 0, self.area_width, self.frame_height
         else:
-            offset_x, W, H = self.new_width1, self.new_width2, self.new_height2
+            offset_x, W, H = self.area_width, self.area_width, self.frame_height
         left_mid = (offset_x + int(0.1 * W), H - 1)
         right_mid = (offset_x + int(0.9 * W), H - 1)
 
