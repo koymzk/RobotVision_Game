@@ -383,7 +383,7 @@ class Game:
         pygame.init()
         SoundManager.init(base_dir="./sounds")
         SoundManager.load("beam", "beam.mp3", volume=1.0)
-        SoundManager.load("guard", "Guard.mp3", volume=3.0)
+        SoundManager.load("guard", "Guard.mp3", volume=10.0)
         # 2台のカメラを設定
         self.cap1 = cv2.VideoCapture(0)
         self.cap2 = cv2.VideoCapture(1)
