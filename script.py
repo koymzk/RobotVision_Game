@@ -61,7 +61,7 @@ class Player:
         self.guard_detector = GuardDetector(player_name=self.name)
         # パンチ検出器（プレイヤーごとに独立）
         self.punch_detector = PunchDetector(player_name=self.name, owner=self)
-        self.laser_event = None  # {'hand': 'left'|'right', 't0': ms, 'pre_ms':100, 'main_ms':250, 'post_ms':100}
+        self.hit_event = None  # {'shoulder': 'left'|'right', 't0': ms}
     
     def take_damage(self, hand=None):
         SoundManager.play("beam")
@@ -69,17 +69,16 @@ class Player:
         # フラッシュは一旦コメントアウト（仕様により画面全体の赤点滅は停止）
         # self.damage_flash = True
         # self.flash_timer = self.flash_duration
-        # レーザーエフェクトを開始（被弾側に描画）
+        # 被弾エフェクト（肩に画像を一定時間表示）開始
         try:
             t0 = pygame.time.get_ticks()
         except Exception:
             t0 = 0
-        self.laser_event = {
-            'hand': hand,          # 'left' or 'right'
+        # 攻撃手と同じ側の肩に表示（left/right）
+        shoulder = 'left' if hand == 'left' else ('right' if hand == 'right' else None)
+        self.hit_event = None if shoulder is None else {
+            'shoulder': shoulder,
             't0': t0,
-            'pre_ms': 100,         # 前段 0.1s（0.25sには含めない）
-            'main_ms': 250,        # 本描画 0.25s
-            'post_ms': 100         # 後段 0.1s（0.25sには含めない）
         }
     
     def update_flash(self):
@@ -434,6 +433,67 @@ class Game:
             print(f"A.T.フィールド画像の読み込みに失敗しました: {e}")
             self.atfield_img = None
 
+        # 攻撃ヒット時の肩エフェクト（flame）設定
+        self.hit_img = None
+        self.hit_scale = 1.0   # 肩幅[px] × 係数 が画像一辺（正方形）
+        self.hit_ms = 1000     # 表示時間(ms)
+        try:
+            flame = pygame.image.load("./images/flame.png")
+            self.hit_img = flame.convert_alpha() if flame.get_alpha() else flame.convert()
+        except Exception as e:
+            print(f"ヒット画像の読み込みに失敗しました: {e}")
+            self.hit_img = None
+    def _draw_hit_effect_for_player(self, screen, player, player_idx):
+        """攻撃が成功したとき、被弾側(player)の肩に flame 画像を一定時間貼る。
+        画像サイズは肩幅(px)×self.hit_scale。self.hit_ms 経過で消える。
+        """
+        if self.hit_img is None:
+            return
+        ev = getattr(player, 'hit_event', None)
+        if not ev:
+            return
+        # 時間経過チェック
+        now = pygame.time.get_ticks()
+        if now - ev.get('t0', 0) >= getattr(self, 'hit_ms', 1000):
+            player.hit_event = None
+            return
+        # どちらの肩か
+        shoulder_side = ev.get('shoulder')
+        if shoulder_side not in ('left', 'right'):
+            return
+        # ランドマークが必要
+        if player.pose_landmarks is None:
+            return
+        try:
+            if shoulder_side == 'left':
+                lm = player.guard_detector._get_lm(player.pose_landmarks, mp.solutions.pose.PoseLandmark.LEFT_SHOULDER)
+            else:
+                lm = player.guard_detector._get_lm(player.pose_landmarks, mp.solutions.pose.PoseLandmark.RIGHT_SHOULDER)
+            # 肩座標（画面座標）
+            cx, cy = self._landmark_to_display_xy(lm, player_idx)
+            # 両肩で肩幅(px)を算出
+            ls = player.guard_detector._get_lm(player.pose_landmarks, mp.solutions.pose.PoseLandmark.LEFT_SHOULDER)
+            rs = player.guard_detector._get_lm(player.pose_landmarks, mp.solutions.pose.PoseLandmark.RIGHT_SHOULDER)
+            ls_xy = self._landmark_to_display_xy(ls, player_idx)
+            rs_xy = self._landmark_to_display_xy(rs, player_idx)
+            shoulder_w_px = max(1, int(math.hypot(ls_xy[0] - rs_xy[0], ls_xy[1] - rs_xy[1])))
+            size = max(8, int(self.hit_scale * shoulder_w_px))
+            img_scaled = pygame.transform.smoothscale(self.hit_img, (size, size))
+            rect = img_scaled.get_rect(center=(cx, cy))
+            # プレイヤーの描画領域にクリップ
+            if player_idx == 1:
+                area_rect = pygame.Rect(0, 0, self.area_width, self.frame_height)
+            else:
+                area_rect = pygame.Rect(self.area_width, 0, self.area_width, self.frame_height)
+            prev_clip = screen.get_clip()
+            screen.set_clip(area_rect)
+            try:
+                screen.blit(img_scaled, rect)
+            finally:
+                screen.set_clip(prev_clip)
+        except Exception:
+            return
+
     def handle_events(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -538,7 +598,7 @@ class Game:
         #     flash_surface = pygame.Surface((new_width1, self.frame_height), pygame.SRCALPHA)
         #     flash_surface.fill((255, 0, 0, 128))  # 128 = 50%透明度
         #     self.screen.blit(flash_surface, (0, 0))
-        self._draw_laser_for_player(self.screen, self.player1, player_idx=1)
+        self._draw_hit_effect_for_player(self.screen, self.player1, player_idx=1)
         # プレイヤー1の体力ゲージは左側の中央に表示
         self.player1.draw_health_bar(self.screen, self.area_width, self.frame_height)
         self.draw_guard_box_with_offset(self.screen, self.player1, 0, self.area_width, self.frame_height)
@@ -557,7 +617,7 @@ class Game:
         #     flash_surface = pygame.Surface((new_width2, self.frame_height), pygame.SRCALPHA)
         #     flash_surface.fill((255, 0, 0, 128))
         #     self.screen.blit(flash_surface, (new_width1, 0))
-        self._draw_laser_for_player(self.screen, self.player2, player_idx=2)
+        self._draw_hit_effect_for_player(self.screen, self.player2, player_idx=2)
         # プレイヤー2の体力ゲージは右側の中央に表示
         self.draw_health_bar_with_offset(self.screen, self.player2, self.area_width, self.area_width, self.frame_height)
         self.draw_guard_box_with_offset(self.screen, self.player2, self.area_width, self.area_width, self.frame_height)
@@ -778,12 +838,12 @@ class Game:
             if not running:
                 break
             self.handle_input()
-            if self.update():
-                break
             if self.update() == 1:
                 print("プレイヤー1の勝利！")
+                break
             elif self.update() == 2:
                 print("プレイヤー2の勝利！")
+                break
             
         keys = pygame.key.get_pressed()
         if keys[pygame.K_q]:
