@@ -435,7 +435,7 @@ class Game:
 
         # 攻撃ヒット時の肩エフェクト（flame）設定
         self.hit_img = None
-        self.hit_scale = 1.0   # 肩幅[px] × 係数 が画像一辺（正方形）
+        self.hit_scale = 2.0   # 肩幅[px] × 係数 が画像一辺（正方形）
         self.hit_ms = 1000     # 表示時間(ms)
         try:
             flame = pygame.image.load("./images/flame.png")
@@ -465,21 +465,23 @@ class Game:
         if player.pose_landmarks is None:
             return
         try:
-            if shoulder_side == 'left':
-                lm = player.guard_detector._get_lm(player.pose_landmarks, mp.solutions.pose.PoseLandmark.LEFT_SHOULDER)
-            else:
-                lm = player.guard_detector._get_lm(player.pose_landmarks, mp.solutions.pose.PoseLandmark.RIGHT_SHOULDER)
-            # 肩座標（画面座標）
-            cx, cy = self._landmark_to_display_xy(lm, player_idx)
-            # 両肩で肩幅(px)を算出
+            # 両肩ランドマーク
             ls = player.guard_detector._get_lm(player.pose_landmarks, mp.solutions.pose.PoseLandmark.LEFT_SHOULDER)
             rs = player.guard_detector._get_lm(player.pose_landmarks, mp.solutions.pose.PoseLandmark.RIGHT_SHOULDER)
             ls_xy = self._landmark_to_display_xy(ls, player_idx)
             rs_xy = self._landmark_to_display_xy(rs, player_idx)
+
+            # 表示位置: 2つの肩の間を4等分し、端の次の位置に少しずらす
+            # 左肩なら 1/4（左端の次）、右肩なら 3/4（右端の次）
+            t = 0.25 if shoulder_side == 'left' else 0.75
+            tx = int(ls_xy[0] + (rs_xy[0] - ls_xy[0]) * t)
+            ty = int(ls_xy[1] + (rs_xy[1] - ls_xy[1]) * t)
+
+            # 肩幅(px)を算出してサイズ決定（self.hit_scale は肩幅比）
             shoulder_w_px = max(1, int(math.hypot(ls_xy[0] - rs_xy[0], ls_xy[1] - rs_xy[1])))
             size = max(8, int(self.hit_scale * shoulder_w_px))
             img_scaled = pygame.transform.smoothscale(self.hit_img, (size, size))
-            rect = img_scaled.get_rect(center=(cx, cy))
+            rect = img_scaled.get_rect(center=(tx, ty))
             # プレイヤーの描画領域にクリップ
             if player_idx == 1:
                 area_rect = pygame.Rect(0, 0, self.area_width, self.frame_height)
