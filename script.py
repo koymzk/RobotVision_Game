@@ -412,6 +412,15 @@ class Game:
         # フォント
         pygame.font.init()
         self.ui_font = pygame.font.SysFont(None, 22)
+        # A.T.フィールド画像とスケール係数（肩幅基準）
+        self.atfield_img = None
+        self.atfield_scale = 1.0  # 肩幅[px] × 係数 が画像の一辺になる
+        try:
+            img = pygame.image.load("./images/atfield.PNG")
+            self.atfield_img = img.convert_alpha() if img.get_alpha() else img.convert()
+        except Exception as e:
+            print(f"A.T.フィールド画像の読み込みに失敗しました: {e}")
+            self.atfield_img = None
 
     def handle_events(self):
         for event in pygame.event.get():
@@ -542,10 +551,19 @@ class Game:
         self.draw_guard_box_with_offset(self.screen, self.player2, self.area_width, self.area_width, self.frame_height)
 
         # 画面を更新
-        pygame.display.update()
 
-        if self.player1.health <= 0 or self.player2.health <= 0:
-            print("ゲームオーバー！")
+        pygame.display.update()
+        
+        if self.player1.health <= 0:
+            font = pygame.font.Font(None, 72)
+            text = font.render("Player 2 Wins!", True, (255, 0, 0))
+            self.screen.blit(text, (100, 100))
+        elif self.player2.health <= 0:
+            font = pygame.font.Font(None, 72)
+            text = font.render("Player 1 Wins!", True, (255, 0, 0))
+            self.screen.blit(text, (100, 100))
+        keys = pygame.key.get_pressed()
+        if keys[pygame.K_q]:
             return False
         return True
 
@@ -626,6 +644,61 @@ class Game:
         x_pix = int(offset_x + x_scaled - crop_x)
         y_pix = int(y_scaled)
         return x_pix, y_pix
+
+    def _draw_atfield_for_player(self, screen, player, player_idx):
+        """バリア(ガード)中の手ごとに、手首と肘の中点を中心にATフィールド画像を表示。
+        画像サイズは肩幅(px)×self.atfield_scaleで毎フレーム追尾する。
+        プレイヤーごとの表示領域にクリッピングして、ATフィールドが他カメラ領域にはみ出さないようにする。
+        """
+        if self.atfield_img is None:
+            return
+        lms = getattr(player, 'pose_landmarks', None)
+        gd = getattr(player, 'guard_detector', None)
+        if lms is None or gd is None:
+            return
+        try:
+            # 肩幅(px)算出
+            ls = player.guard_detector._get_lm(lms, mp.solutions.pose.PoseLandmark.LEFT_SHOULDER)
+            rs = player.guard_detector._get_lm(lms, mp.solutions.pose.PoseLandmark.RIGHT_SHOULDER)
+            ls_xy = self._landmark_to_display_xy(ls, player_idx)
+            rs_xy = self._landmark_to_display_xy(rs, player_idx)
+            shoulder_w_px = max(1, int(math.hypot(ls_xy[0] - rs_xy[0], ls_xy[1] - rs_xy[1])))
+        except Exception:
+            return
+
+        # --- プレイヤーごとの表示領域にクリッピング ---
+        if player_idx == 1:
+            area_rect = pygame.Rect(0, 0, self.area_width, self.frame_height)
+        else:
+            area_rect = pygame.Rect(self.area_width, 0, self.area_width, self.frame_height)
+        prev_clip = screen.get_clip()
+        screen.set_clip(area_rect)
+        try:
+            def _hand_center_and_draw(wrist_idx, elbow_idx):
+                try:
+                    w = player.guard_detector._get_lm(lms, wrist_idx)
+                    e = player.guard_detector._get_lm(lms, elbow_idx)
+                    wx, wy = self._landmark_to_display_xy(w, player_idx)
+                    ex, ey = self._landmark_to_display_xy(e, player_idx)
+                    cx = (wx + ex) // 2
+                    cy = (wy + ey) // 2
+                    size = max(8, int(self.atfield_scale * shoulder_w_px))
+                    # 画像は正方形にスケール
+                    img_scaled = pygame.transform.smoothscale(self.atfield_img, (size, size))
+                    rect = img_scaled.get_rect(center=(cx, cy))
+                    screen.blit(img_scaled, rect)
+                except Exception:
+                    pass
+
+            # 左手ガード中
+            if getattr(gd, 'left_active', False):
+                _hand_center_and_draw(mp.solutions.pose.PoseLandmark.LEFT_WRIST, mp.solutions.pose.PoseLandmark.LEFT_ELBOW)
+            # 右手ガード中
+            if getattr(gd, 'right_active', False):
+                _hand_center_and_draw(mp.solutions.pose.PoseLandmark.RIGHT_WRIST, mp.solutions.pose.PoseLandmark.RIGHT_ELBOW)
+        finally:
+            # クリッピングを元に戻す
+            screen.set_clip(prev_clip)
 
     def _draw_laser_for_player(self, screen, player, player_idx):
         """被弾側(player)の画面にレーザーを描画。色は赤、線分を時間的に伸ばし→消す。
