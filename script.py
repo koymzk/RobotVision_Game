@@ -510,6 +510,8 @@ class Game:
             # 幅が足りない場合は左寄せ（中央寄せにしたい場合はオフセット追加）
             self.screen.blit(frame1_surface, (0, 0))
         self.player1.update_flash()
+        # ガード中の手の中点にATフィールドを描画
+        self._draw_atfield_for_player(self.screen, self.player1, player_idx=1)
         # 画面全体が赤色になる機能は一時停止（コメントアウト）
         # if self.player1.damage_flash:
         #     flash_surface = pygame.Surface((new_width1, self.frame_height), pygame.SRCALPHA)
@@ -527,6 +529,8 @@ class Game:
         else:
             self.screen.blit(frame2_surface, (self.area_width, 0))
         self.player2.update_flash()
+        # ガード中の手の中点にATフィールドを描画
+        self._draw_atfield_for_player(self.screen, self.player2, player_idx=2)
         # 画面全体が赤色になる機能は一時停止（コメントアウト）
         # if self.player2.damage_flash:
         #     flash_surface = pygame.Surface((new_width2, self.frame_height), pygame.SRCALPHA)
