@@ -119,7 +119,7 @@ class Player:
 
 # Mediapipe Pose をラップする検出クラス（1カメラ=1インスタンス推奨）
 class PoseDetector:
-    def __init__(self, static_image_mode=False, model_complexity=1, enable_segmentation=False, min_detection_confidence=0.5, min_tracking_confidence=0.5):
+    def __init__(self, static_image_mode=False, model_complexity=1, enable_segmentation=False, min_detection_confidence=0.5, min_tracking_confidence=0.5, draw_landmarks=False):
         self.mp_pose = mp.solutions.pose
         self.mp_drawing = mp.solutions.drawing_utils
         self.mp_styles = mp.solutions.drawing_styles
@@ -130,6 +130,7 @@ class PoseDetector:
             min_detection_confidence=min_detection_confidence,
             min_tracking_confidence=min_tracking_confidence,
         )
+        self.draw_landmarks = draw_landmarks
 
     def process(self, frame_rgb):
         """
@@ -144,7 +145,7 @@ class PoseDetector:
 
         # ランドマーク描画はまずRGBに行う
         output_rgb = frame_rgb.copy()
-        if landmarks is not None:
+        if landmarks is not None and self.draw_landmarks:
             self.mp_drawing.draw_landmarks(
                 output_rgb,
                 landmarks,
@@ -385,9 +386,12 @@ class Game:
         self.player1.opponent = self.player2
         self.player2.opponent = self.player1
 
+        # 骨格表示のON/OFFフラグ
+        self.show_pose = True  # Mediapipe骨格表示のON/OFF
+
         # Pose 検出器（カメラごとに1つ）とアクション認識器
-        self.pose1 = PoseDetector(enable_segmentation=True)
-        self.pose2 = PoseDetector(enable_segmentation=True)
+        self.pose1 = PoseDetector(enable_segmentation=True, draw_landmarks=self.show_pose)
+        self.pose2 = PoseDetector(enable_segmentation=True, draw_landmarks=self.show_pose)
         self.action_recognizer = ActionRecognizer()
 
         # 1つのウィンドウに2つのカメラ映像を表示するための画面設定
@@ -413,6 +417,14 @@ class Game:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_p:  # 'P'キーで骨格表示をトグル
+                    self.show_pose = not self.show_pose
+                    # 2つのPoseDetectorに反映
+                    if hasattr(self, 'pose1') and self.pose1 is not None:
+                        self.pose1.draw_landmarks = self.show_pose
+                    if hasattr(self, 'pose2') and self.pose2 is not None:
+                        self.pose2.draw_landmarks = self.show_pose
         return True
     
     def handle_input(self):
