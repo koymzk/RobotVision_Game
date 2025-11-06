@@ -528,8 +528,8 @@ class Game:
         self.crop_x1 = self.crop_x2 = 0
         
         # プレイヤー1、2の初期設定
-        self.player1 = Player(health=300, attack_power=10, name="P1")
-        self.player2 = Player(health=300, attack_power=10, name="P2")
+        self.player1 = Player(health=500, attack_power=10, name="P1")
+        self.player2 = Player(health=500, attack_power=10, name="P2")
         self.player1.opponent = self.player2
         self.player2.opponent = self.player1
 
