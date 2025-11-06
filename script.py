@@ -650,9 +650,9 @@ class Game:
         pygame.display.update()
         
         if self.player1.health <= 0:
-            return 2
-        elif self.player2.health <= 0:
             return 1
+        elif self.player2.health <= 0:
+            return 2
 
         return False
 
@@ -917,15 +917,13 @@ class Game:
                 break
             self.handle_input()
             if self.update() == 1:
-                print("プレイヤー1の勝利！")
+                face = 0
                 break
             elif self.update() == 2:
-                print("プレイヤー2の勝利！")
+                face = 1
                 break
             
-        keys = pygame.key.get_pressed()
-        if keys[pygame.K_q]:
-            return False
+
         
         # リソース解放
         self.pose1.close()
@@ -933,6 +931,50 @@ class Game:
         self.cap1.release()
         self.cap2.release()
         pygame.quit()
+        
+            # Mediapipe Face Detection モジュールの初期化
+        mp_face_detection = mp.solutions.face_detection
+        mp_drawing = mp.solutions.drawing_utils
+        # カメラ入力（または画像ファイルも可）
+        cap = cv2.VideoCapture(face)
+        with mp_face_detection.FaceDetection(model_selection=0, min_detection_confidence=0.5) as face_detection:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                # 画像をRGBに変換（MediapipeはRGB入力を想定）
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                results = face_detection.process(rgb_frame)
+                # 顔検出結果がある場合
+                if results.detections:
+                    for detection in results.detections:
+                        bboxC = detection.location_data.relative_bounding_box
+                        h, w, _ = frame.shape
+                        # Mediapipeは相対座標なのでピクセル単位に変換
+                        x, y, w_box, h_box = int(bboxC.xmin * w), int(bboxC.ymin * h), int(bboxC.width * w), int(bboxC.height * h)
+                        # 顔部分を切り取り（範囲外エラー防止のためクリップ）
+                        x1, y1 = max(0, x), max(0, y)
+                        x2, y2 = min(w, x + w_box), min(h, y + h_box)
+                        face_crop = frame[y1:y2, x1:x2]
+                        # 顔部分を別ウィンドウで表示
+                        if face_crop.size > 0:
+                            cv2.putText(
+                                face_crop,
+                                "LOSER!!",
+                                (20, 50),
+                                cv2.FONT_HERSHEY_DUPLEX,
+                                3,
+                                (0, 0, 255),
+                                5,
+                                cv2.LINE_AA
+                            )
+                            cv2.imshow("LOSER", face_crop)
+                keys = pygame.key.get_pressed()
+                if keys[pygame.K_q]:
+                    break
+            cap.release()
+            cv2.destroyAllWindows()
+
 
 # ゲームを開始
 game = Game()
