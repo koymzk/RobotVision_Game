@@ -313,6 +313,7 @@ class PunchDetector:
                     blocked = bool(opp.guard_detector.right_active)
                 if blocked:
                     print(f"{self.player_name}: 左パンチはガードに防がれた v={v:.2f} dd={dd_norm:.2f}")
+                    SoundManager.play("guard")
                 else:
                     print(f"{self.player_name}: 左パンチ！ v={v:.2f} dd={dd_norm:.2f}")
                     opp.take_damage(hand='left') if opp is not None else None
@@ -339,6 +340,7 @@ class PunchDetector:
                     blocked = bool(opp.guard_detector.left_active)
                 if blocked:
                     print(f"{self.player_name}: 右パンチはガードに防がれた v={v:.2f} dd={dd_norm:.2f}")
+                    SoundManager.play("guard")
                 else:
                     print(f"{self.player_name}: 右パンチ！ v={v:.2f} dd={dd_norm:.2f}")
                     opp.take_damage(hand='right') if opp is not None else None
@@ -358,6 +360,7 @@ class Game:
         pygame.init()
         SoundManager.init(base_dir="./sounds")
         SoundManager.load("beam", "beam.mp3", volume=1.0)
+        SoundManager.load("guard", "Guard.mp3", volume=1.0)
         # 2台のカメラを設定
         self.cap1 = cv2.VideoCapture(0)
         self.cap2 = cv2.VideoCapture(1)
