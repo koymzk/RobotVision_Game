@@ -115,6 +115,17 @@ class Player:
         pygame.draw.rect(screen, (255, 0, 0), health_bar)  # 赤い枠
         ratio = 0 if self.max_health <= 0 else max(0.0, min(1.0, self.health / self.max_health))
         pygame.draw.rect(screen, (0, 255, 0), (health_bar_x, 20, ratio * health_bar_width, health_bar_height))  # 緑の体力ゲージ
+        # --- HP数値（バー直下中央、フォントはバー高さの約2倍） ---
+        try:
+            hp_font_size = max(12, int(health_bar_height * 2))
+            hp_font = pygame.font.SysFont(None, hp_font_size)
+            hp_text = str(int(max(0, self.health)))  # 現在HPのみ表示
+            hp_surf = hp_font.render(hp_text, True, (255, 255, 255))
+            hp_rect = hp_surf.get_rect()
+            hp_rect.midtop = (int(health_bar_x + health_bar_width / 2), int(20 + health_bar_height + 2))
+            screen.blit(hp_surf, hp_rect)
+        except Exception:
+            pass
         # --- Guard Stamina Circles (HPゲージ左右) ---
         def _draw_pie(surface, center, radius, fraction, color):
             # fraction in [0,1]
@@ -136,11 +147,12 @@ class Player:
 
         gd = getattr(self, 'guard_detector', None)
         if gd is not None:
-            radius = int(health_bar_height * 2)
+            radius = int(health_bar_height * 3)  # 1.5倍（従来: 2*h → 3*h）
             cy = 20 + health_bar_height // 2
             pad = 12
-            left_center = (int(health_bar_x - pad - radius), int(cy))
-            right_center = (int(health_bar_x + health_bar_width + pad + radius), int(cy))
+            # 左右を逆に配置し、下方向へ半径分オフセット
+            left_center = (int(health_bar_x + health_bar_width + pad + radius), int(cy + radius))
+            right_center = (int(health_bar_x - pad - radius), int(cy + radius))
             # 背景（欠け）灰色の円
             pygame.draw.circle(screen, (80, 80, 80), left_center, radius)
             pygame.draw.circle(screen, (80, 80, 80), right_center, radius)
@@ -763,6 +775,17 @@ class Game:
         pygame.draw.rect(screen, (255, 0, 0), health_bar)  # 赤い枠
         ratio = 0 if player.max_health <= 0 else max(0.0, min(1.0, player.health / player.max_health))
         pygame.draw.rect(screen, (0, 255, 0), (health_bar_x, 20, ratio * health_bar_width, health_bar_height))  # 緑の体力ゲージ
+        # --- HP数値（バー直下中央、フォントはバー高さの約2倍） ---
+        try:
+            hp_font_size = max(12, int(health_bar_height * 2))
+            hp_font = pygame.font.SysFont(None, hp_font_size)
+            hp_text = str(int(max(0, player.health)))
+            hp_surf = hp_font.render(hp_text, True, (255, 255, 255))
+            hp_rect = hp_surf.get_rect()
+            hp_rect.midtop = (int(health_bar_x + health_bar_width / 2), int(20 + health_bar_height + 2))
+            screen.blit(hp_surf, hp_rect)
+        except Exception:
+            pass
         # --- Guard Stamina Circles (HPゲージ左右) ---
         def _draw_pie(surface, center, radius, fraction, color):
             if fraction <= 0:
@@ -783,11 +806,12 @@ class Game:
 
         gd = getattr(player, 'guard_detector', None)
         if gd is not None:
-            radius = int(health_bar_height * 2)
+            radius = int(health_bar_height * 3)  # 1.5倍（従来: 2*h → 3*h）
             cy = 20 + health_bar_height // 2
             pad = 12
-            left_center = (int(health_bar_x - pad - radius), int(cy))
-            right_center = (int(health_bar_x + health_bar_width + pad + radius), int(cy))
+            # 左右を逆に配置し、下方向へ半径分オフセット
+            left_center = (int(health_bar_x + health_bar_width + pad + radius), int(cy + radius))
+            right_center = (int(health_bar_x - pad - radius), int(cy + radius))
             pygame.draw.circle(screen, (80, 80, 80), left_center, radius)
             pygame.draw.circle(screen, (80, 80, 80), right_center, radius)
             lsmax = max(1, int(getattr(gd, 'left_stamina_max_ms', 3000)))
