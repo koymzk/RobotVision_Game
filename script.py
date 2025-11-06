@@ -313,17 +313,17 @@ class PunchDetector:
                     gd.left_active = False
                     gd.left_in_ms = 0
                     gd.left_out_ms = gd.hold_ms  # すぐ再ONにならないようにホールド分加算
-                # 左パンチ: 相手の右ガードで防がれる
+                # 左パンチ: 相手の左ガードで防がれる
                 opp = self.owner.opponent if (self.owner is not None and getattr(self.owner, "opponent", None) is not None) else None
                 blocked = False
                 if opp is not None and getattr(opp, "guard_detector", None) is not None:
-                    blocked = bool(opp.guard_detector.right_active)
+                    blocked = bool(opp.guard_detector.left_active)
                 if blocked:
                     print(f"{self.player_name}: 左パンチはガードに防がれた v={v:.2f} dd={dd_norm:.2f}")
                     SoundManager.play("guard")
                     try:
                         if opp is not None and hasattr(opp, 'guard_block_event'):
-                            opp.guard_block_event['right'] = pygame.time.get_ticks()
+                            opp.guard_block_event['left'] = pygame.time.get_ticks()
                     except Exception:
                         pass
                 else:
@@ -351,17 +351,17 @@ class PunchDetector:
                     gd.right_active = False
                     gd.right_in_ms = 0
                     gd.right_out_ms = gd.hold_ms  # すぐ再ONにならないようにホールド分加算
-                # 右パンチ: 相手の左ガードで防がれる
+                # 右パンチ: 相手の右ガードで防がれる
                 opp = self.owner.opponent if (self.owner is not None and getattr(self.owner, "opponent", None) is not None) else None
                 blocked = False
                 if opp is not None and getattr(opp, "guard_detector", None) is not None:
-                    blocked = bool(opp.guard_detector.left_active)
+                    blocked = bool(opp.guard_detector.right_active)
                 if blocked:
                     print(f"{self.player_name}: 右パンチはガードに防がれた v={v:.2f} dd={dd_norm:.2f}")
                     SoundManager.play("guard")
                     try:
                         if opp is not None and hasattr(opp, 'guard_block_event'):
-                            opp.guard_block_event['left'] = pygame.time.get_ticks()
+                            opp.guard_block_event['right'] = pygame.time.get_ticks()
                     except Exception:
                         pass
                 else:
@@ -494,7 +494,7 @@ class Game:
 
             # 表示位置: 2つの肩の間を4等分し、端の次の位置に少しずらす
             # 左肩なら 1/4（左端の次）、右肩なら 3/4（右端の次）
-            t = 0.25 if shoulder_side == 'left' else 0.75  # 鏡映のため左右反転
+            t = 0.75 if shoulder_side == 'left' else 0.25  # 鏡映のため左右反転
             tx = int(ls_xy[0] + (rs_xy[0] - ls_xy[0]) * t)
             ty = int(ls_xy[1] + (rs_xy[1] - ls_xy[1]) * t)
 
