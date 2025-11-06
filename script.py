@@ -62,6 +62,7 @@ class Player:
         # パンチ検出器（プレイヤーごとに独立）
         self.punch_detector = PunchDetector(player_name=self.name, owner=self)
         self.hit_event = None  # {'shoulder': 'left'|'right', 't0': ms}
+        self.guard_block_event = {'left': None, 'right': None}  # ガード成功の発光トリガ（手ごと）
     
     def take_damage(self, hand=None):
         SoundManager.play("beam")
@@ -320,6 +321,11 @@ class PunchDetector:
                 if blocked:
                     print(f"{self.player_name}: 左パンチはガードに防がれた v={v:.2f} dd={dd_norm:.2f}")
                     SoundManager.play("guard")
+                    try:
+                        if opp is not None and hasattr(opp, 'guard_block_event'):
+                            opp.guard_block_event['right'] = pygame.time.get_ticks()
+                    except Exception:
+                        pass
                 else:
                     print(f"{self.player_name}: 左パンチ！ v={v:.2f} dd={dd_norm:.2f}")
                     opp.take_damage(hand='left') if opp is not None else None
@@ -353,6 +359,11 @@ class PunchDetector:
                 if blocked:
                     print(f"{self.player_name}: 右パンチはガードに防がれた v={v:.2f} dd={dd_norm:.2f}")
                     SoundManager.play("guard")
+                    try:
+                        if opp is not None and hasattr(opp, 'guard_block_event'):
+                            opp.guard_block_event['left'] = pygame.time.get_ticks()
+                    except Exception:
+                        pass
                 else:
                     print(f"{self.player_name}: 右パンチ！ v={v:.2f} dd={dd_norm:.2f}")
                     opp.take_damage(hand='right') if opp is not None else None
@@ -432,6 +443,16 @@ class Game:
         except Exception as e:
             print(f"A.T.フィールド画像の読み込みに失敗しました: {e}")
             self.atfield_img = None
+
+        # ガード成功時のATフィールド色相反転（180°）の表示時間(ms)
+        self.atfield_block_hue_ms = 500
+        # 180度色相変更版のATフィールド画像を事前生成
+        self.atfield_img_hue180 = None
+        try:
+            if self.atfield_img is not None:
+                self.atfield_img_hue180 = self._make_hue_shifted(self.atfield_img, 180)
+        except Exception as e:
+            print(f"ATフィールドの色相変換に失敗しました: {e}")
 
         # 攻撃ヒット時の肩エフェクト（flame）設定
         self.hit_img = None
@@ -713,6 +734,48 @@ class Game:
         y_pix = int(y_scaled)
         return x_pix, y_pix
 
+    def _make_hue_shifted(self, surf, degrees):
+        """pygame.Surface(surf) の色相を degrees 度シフトした Surface を返す。
+        アルファは保持。OpenCVのHSV(H:0-179)を用いるため、180度は+90に相当。
+        """
+        try:
+            if surf is None:
+                return None
+            # 画像をRGB配列に（形状は (w,h,3) ）
+            arr_rgb = pygame.surfarray.array3d(surf)
+            # OpenCV は (h,w,3) を期待するので転置
+            arr_rgb = np.transpose(arr_rgb, (1, 0, 2)).copy()
+            # RGBA のアルファは別取得
+            alpha = None
+            if surf.get_masks()[3] != 0 or surf.get_bitsize() in (32,):
+                try:
+                    alpha = pygame.surfarray.array_alpha(surf)
+                    alpha = np.transpose(alpha, (1, 0)).copy()
+                except Exception:
+                    alpha = None
+            # RGB->HSV (OpenCVはH:0-179)
+            hsv = cv2.cvtColor(arr_rgb, cv2.COLOR_RGB2HSV)
+            shift = int((degrees / 360.0) * 180) % 180
+            hsv[:, :, 0] = (hsv[:, :, 0].astype(np.int16) + shift) % 180
+            rgb_shifted = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
+            # pygame.Surface へ戻す（再び (w,h,3) に転置）
+            rgb_shifted = np.transpose(rgb_shifted, (1, 0, 2))
+            out = pygame.Surface(surf.get_size(), pygame.SRCALPHA, 32)
+            pygame.surfarray.blit_array(out, rgb_shifted)
+            if alpha is not None:
+                alpha = np.transpose(alpha, (1, 0))  # (w,h) に戻す
+                alpha = np.clip(alpha, 0, 255).astype(np.uint8)
+                out.lock()
+                try:
+                    # アルファを書き戻す
+                    pygame.surfarray.pixels_alpha(out)[:, :] = alpha
+                finally:
+                    out.unlock()
+            return out.convert_alpha() if out.get_alpha() else out.convert()
+        except Exception as e:
+            print(f"[make_hue_shifted] 失敗: {e}")
+            return None
+
     def _draw_atfield_for_player(self, screen, player, player_idx):
         """バリア(ガード)中の手ごとに、手首と肘の中点を中心にATフィールド画像を表示。
         画像サイズは肩幅(px)×self.atfield_scaleで毎フレーム追尾する。
@@ -742,7 +805,7 @@ class Game:
         prev_clip = screen.get_clip()
         screen.set_clip(area_rect)
         try:
-            def _hand_center_and_draw(wrist_idx, elbow_idx):
+            def _hand_center_and_draw(wrist_idx, elbow_idx, hand_side):
                 try:
                     w = player.guard_detector._get_lm(lms, wrist_idx)
                     e = player.guard_detector._get_lm(lms, elbow_idx)
@@ -751,8 +814,21 @@ class Game:
                     cx = (wx + ex) // 2
                     cy = (wy + ey) // 2
                     size = max(8, int(self.atfield_scale * shoulder_w_px))
-                    # 画像は正方形にスケール
-                    img_scaled = pygame.transform.smoothscale(self.atfield_img, (size, size))
+
+                    # ガード成功直後のハイライト期間中は色相180°版を使用
+                    use_img = self.atfield_img
+                    try:
+                        evmap = getattr(player, 'guard_block_event', None)
+                        if evmap is not None:
+                            t0 = evmap.get(hand_side)
+                            if t0 is not None:
+                                if pygame.time.get_ticks() - t0 < getattr(self, 'atfield_block_hue_ms', 500):
+                                    if getattr(self, 'atfield_img_hue180', None) is not None:
+                                        use_img = self.atfield_img_hue180
+                    except Exception:
+                        pass
+
+                    img_scaled = pygame.transform.smoothscale(use_img, (size, size))
                     rect = img_scaled.get_rect(center=(cx, cy))
                     screen.blit(img_scaled, rect)
                 except Exception:
@@ -760,10 +836,10 @@ class Game:
 
             # 左手ガード中
             if getattr(gd, 'left_active', False):
-                _hand_center_and_draw(mp.solutions.pose.PoseLandmark.LEFT_WRIST, mp.solutions.pose.PoseLandmark.LEFT_ELBOW)
+                _hand_center_and_draw(mp.solutions.pose.PoseLandmark.LEFT_WRIST, mp.solutions.pose.PoseLandmark.LEFT_ELBOW, 'left')
             # 右手ガード中
             if getattr(gd, 'right_active', False):
-                _hand_center_and_draw(mp.solutions.pose.PoseLandmark.RIGHT_WRIST, mp.solutions.pose.PoseLandmark.RIGHT_ELBOW)
+                _hand_center_and_draw(mp.solutions.pose.PoseLandmark.RIGHT_WRIST, mp.solutions.pose.PoseLandmark.RIGHT_ELBOW, 'right')
         finally:
             # クリッピングを元に戻す
             screen.set_clip(prev_clip)
