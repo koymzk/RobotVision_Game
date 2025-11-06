@@ -465,7 +465,7 @@ class Game:
         ret1, frame1 = self.cap1.read()
         if not ret1:
             print("カメラ1からフレームを取得できませんでした。")
-            return False
+            return True
         # 入力直後に左右反転（ミラー表示）
         frame1 = cv2.flip(frame1, 1)
 
@@ -473,7 +473,7 @@ class Game:
         ret2, frame2 = self.cap2.read()
         if not ret2:
             print("カメラ2からフレームを取得できませんでした。")
-            return False
+            return True
         # 入力直後に左右反転（ミラー表示）
         frame2 = cv2.flip(frame2, 1)
         
@@ -567,17 +567,11 @@ class Game:
         pygame.display.update()
         
         if self.player1.health <= 0:
-            font = pygame.font.Font(None, 72)
-            text = font.render("Player 2 Wins!", True, (255, 0, 0))
-            self.screen.blit(text, (100, 100))
+            return 2
         elif self.player2.health <= 0:
-            font = pygame.font.Font(None, 72)
-            text = font.render("Player 1 Wins!", True, (255, 0, 0))
-            self.screen.blit(text, (100, 100))
-        keys = pygame.key.get_pressed()
-        if keys[pygame.K_q]:
-            return False
-        return True
+            return 1
+
+        return False
 
     def draw_health_bar_with_offset(self, screen, player, offset_x, frame_width, frame_height):
         health_bar_width = frame_width * 0.4
@@ -784,8 +778,16 @@ class Game:
             if not running:
                 break
             self.handle_input()
-            if not self.update():
+            if self.update():
                 break
+            if self.update() == 1:
+                print("プレイヤー1の勝利！")
+            elif self.update() == 2:
+                print("プレイヤー2の勝利！")
+            
+        keys = pygame.key.get_pressed()
+        if keys[pygame.K_q]:
+            return False
         
         # リソース解放
         self.pose1.close()
