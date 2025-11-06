@@ -256,7 +256,7 @@ class PunchDetector:
 
     ※ MediaPipeのZはカメラに近いほど負になりやすいため、手前へ素早く突き出すと v は正に大きくなる。
     """
-    def __init__(self, player_name="P", owner=None, vel_thresh=0.30, ext_thresh=0.16, cooldown_ms=1000):
+    def __init__(self, player_name="P", owner=None, vel_thresh=0.10, ext_thresh=0.20, cooldown_ms=600):
         self.player_name = player_name
         self.vel_thresh = vel_thresh  # 正規化前方速度しきい値
         self.ext_thresh = ext_thresh  # 正規化した腕伸長増分しきい値（肩幅比）
