@@ -66,6 +66,7 @@ class Player:
         self.guard_block_event = {'left': None, 'right': None}  # ガード成功の発光トリガ（手ごと）
         # ガード反射ダメージ用のフラッシュ（枠表示）
         self.reflect_event = None  # {'t0': ms, 'dur': ms}
+        self.laser_event = None
     
     def take_damage(self, hand=None, amount=None):
         SoundManager.play("beam")
@@ -553,6 +554,38 @@ class Game:
         except Exception as e:
             print(f"背景画像の読み込みに失敗しました: {e}")
             self.bg_surf = None
+
+        # A.T.フィールド画像とスケール係数（肩幅基準）
+        self.atfield_img = None
+        self.atfield_scale = 2.0  # 肩幅[px] × 係数 が画像の一辺になる（2倍）
+        try:
+            img = pygame.image.load("./images/atfield.PNG")
+            self.atfield_img = img.convert_alpha() if img.get_alpha() else img.convert()
+        except Exception as e:
+            print(f"A.T.フィールド画像の読み込みに失敗しました: {e}")
+            self.atfield_img = None
+
+        # ガード成功時のATフィールド色相反転（180°）の表示時間(ms)
+        self.atfield_block_hue_ms = 500
+        # 180度色相変更版のATフィールド画像を事前生成
+        self.atfield_img_hue180 = None
+        try:
+            if self.atfield_img is not None:
+                self.atfield_img_hue180 = self._make_hue_shifted(self.atfield_img, 180)
+        except Exception as e:
+            print(f"ATフィールドの色相変換に失敗しました: {e}")
+
+        # 攻撃ヒット時の肩エフェクト（flame）設定
+        self.hit_img = None
+        self.hit_scale = 2.0   # 肩幅[px] × 係数 が画像一辺（正方形）
+        self.hit_ms = 1000     # 表示時間(ms)
+        try:
+            flame = pygame.image.load("./images/flame.png")
+            self.hit_img = flame.convert_alpha() if flame.get_alpha() else flame.convert()
+        except Exception as e:
+            print(f"ヒット画像の読み込みに失敗しました: {e}")
+            self.hit_img = None
+
         # 経過時間管理（ミリ秒）
         self.prev_ticks = pygame.time.get_ticks()
         # フォント
@@ -594,36 +627,6 @@ class Game:
             pygame.draw.rect(screen, col, pygame.Rect(area_rect.right - bw, area_rect.top, bw, area_rect.height))
         except Exception:
             pass
-        # A.T.フィールド画像とスケール係数（肩幅基準）
-        self.atfield_img = None
-        self.atfield_scale = 2.0  # 肩幅[px] × 係数 が画像の一辺になる（2倍）
-        try:
-            img = pygame.image.load("./images/atfield.PNG")
-            self.atfield_img = img.convert_alpha() if img.get_alpha() else img.convert()
-        except Exception as e:
-            print(f"A.T.フィールド画像の読み込みに失敗しました: {e}")
-            self.atfield_img = None
-
-        # ガード成功時のATフィールド色相反転（180°）の表示時間(ms)
-        self.atfield_block_hue_ms = 500
-        # 180度色相変更版のATフィールド画像を事前生成
-        self.atfield_img_hue180 = None
-        try:
-            if self.atfield_img is not None:
-                self.atfield_img_hue180 = self._make_hue_shifted(self.atfield_img, 180)
-        except Exception as e:
-            print(f"ATフィールドの色相変換に失敗しました: {e}")
-
-        # 攻撃ヒット時の肩エフェクト（flame）設定
-        self.hit_img = None
-        self.hit_scale = 2.0   # 肩幅[px] × 係数 が画像一辺（正方形）
-        self.hit_ms = 1000     # 表示時間(ms)
-        try:
-            flame = pygame.image.load("./images/flame.png")
-            self.hit_img = flame.convert_alpha() if flame.get_alpha() else flame.convert()
-        except Exception as e:
-            print(f"ヒット画像の読み込みに失敗しました: {e}")
-            self.hit_img = None
     def _draw_hit_effect_for_player(self, screen, player, player_idx):
         """攻撃が成功したとき、被弾側(player)の肩に flame 画像を一定時間貼る。
         画像サイズは肩幅(px)×self.hit_scale。self.hit_ms 経過で消える。
@@ -1064,7 +1067,7 @@ class Game:
         """被弾側(player)の画面にレーザーを描画。色は赤、線分を時間的に伸ばし→消す。
         時間構成: pre(0.1s) で0→フル長、main(0.25s) で手前から消える、post(0.1s) は非表示。
         """
-        if player.laser_event is None:
+        if getattr(player, 'laser_event', None) is None:
             return
         ev = player.laser_event
         hand = ev.get('hand')
