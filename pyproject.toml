@@ -1,0 +1,12 @@
+[project]
+name = "robotvision-game"
+version = "0.1.0"
+description = "A Multiplayer Fighting Game with 2 Cameras"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "mediapipe>=0.10.21",
+    "numpy>=1.26.4",
+    "opencv-python>=4.11.0.86",
+    "pygame>=2.6.1",
+]
